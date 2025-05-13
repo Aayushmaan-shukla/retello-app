@@ -1,0 +1,22 @@
+from typing import Optional, List, Dict, Any
+from pydantic import BaseModel
+from datetime import datetime
+
+class ChatBase(BaseModel):
+    prompt: str
+
+class ChatCreate(ChatBase):
+    pass
+
+class Chat(ChatBase):
+    id: str
+    user_id: str
+    session_id: str
+    response: Optional[str] = None
+    phones: List[Dict[str, Any]] = []
+    current_params: Dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True 
