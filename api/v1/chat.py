@@ -1,9 +1,13 @@
 from typing import Any, List
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 import uuid
 import requests
-from datetime import datetime
+import json
+import asyncio
+import httpx
+from datetime import datetime, timedelta
 
 from app.core.config import settings
 from app.db.base import get_db
@@ -14,6 +18,13 @@ from app.api.v1.auth import get_current_user
 from app.models.user import User
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+
+async def stream_response(response):
+    """Helper function to stream the response from the external service"""
+    async for chunk in response.aiter_text():
+        if chunk:
+            yield f"data: {chunk}\n\n"
+            await asyncio.sleep(0.01)
 
 @router.post("", response_model=ChatSchema)
 async def create_chat(
@@ -26,18 +37,28 @@ async def create_chat(
     Create a new chat session with the first message.
     This endpoint is used for the first message in a conversation.
     """
-    # Create new session for first message
-    db_session = Session(
-        id=str(uuid.uuid4()),
-        user_id=current_user.id,
-        name=f"Chat Session {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-        is_public=False,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow()
-    )
-    db.add(db_session)
-    db.commit()
-    session_id = db_session.id
+    # Check for a recent session (within the last 2 minutes)
+    recent_time = datetime.utcnow() - timedelta(minutes=2)
+    recent_session = db.query(Session).filter(
+        Session.user_id == current_user.id,
+        Session.created_at >= recent_time
+    ).order_by(Session.created_at.desc()).first()
+
+    if recent_session:
+        db_session = recent_session
+        session_id = db_session.id
+    else:
+        db_session = Session(
+            id=str(uuid.uuid4()),
+            user_id=current_user.id,
+            name=f"Chat Session {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            is_public=False,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
+        db.add(db_session)
+        db.commit()
+        session_id = db_session.id
 
     # Prepare prompt for external service
     prompt = {
@@ -51,28 +72,59 @@ async def create_chat(
         ]
     }
 
-    # Call external service
+    # Call external service with streaming
     try:
-        response = requests.post(settings.MICRO_URL, json=prompt)
-        response.raise_for_status()
-        response_data = response.json()
-    except requests.RequestException as e:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                settings.MICRO_URL,
+                json=prompt,
+                timeout=None
+            )
+            response.raise_for_status()
+            
+            # Create chat entry with initial data
+            db_chat = Chat(
+                id=str(uuid.uuid4()),
+                user_id=current_user.id,
+                session_id=session_id,
+                prompt=chat_in.prompt,
+                response="",  # Will be updated as we receive chunks
+                phones=[],    # Will be updated as we receive chunks
+                current_params={}  # Will be updated as we receive chunks
+            )
+            db.add(db_chat)
+            db.commit()
+            
+            return StreamingResponse(
+                stream_response(response),
+                media_type="text/event-stream"
+            )
+            
+    except httpx.RequestError as e:
         raise HTTPException(status_code=500, detail=f"Error calling external service: {str(e)}")
 
-    # Create chat entry
-    db_chat = Chat(
-        id=str(uuid.uuid4()),
-        user_id=current_user.id,
-        session_id=session_id,
-        prompt=chat_in.prompt,
-        response=response_data.get("follow_up_question", [{}])[-1].get("content"),
-        phones=response_data.get("phones", []),
-        current_params=response_data.get("current_params", {})
-    )
-    db.add(db_chat)
-    db.commit()
-    db.refresh(db_chat)
-    return db_chat
+    # # Old non-streaming implementation
+    # try:
+    #     response = requests.post(settings.MICRO_URL, json=prompt)
+    #     response.raise_for_status()
+    #     response_data = response.json()
+    # except requests.RequestException as e:
+    #     raise HTTPException(status_code=500, detail=f"Error calling external service: {str(e)}")
+
+    # # Create chat entry
+    # db_chat = Chat(
+    #     id=str(uuid.uuid4()),
+    #     user_id=current_user.id,
+    #     session_id=session_id,
+    #     prompt=chat_in.prompt,
+    #     response=response_data.get("follow_up_question", [{}])[-1].get("content"),
+    #     phones=response_data.get("phones", []),
+    #     current_params=response_data.get("current_params", {})
+    # )
+    # db.add(db_chat)
+    # db.commit()
+    # db.refresh(db_chat)
+    # return db_chat
 
 @router.post("/{session_id}", response_model=ChatSchema)
 async def continue_chat(
@@ -128,28 +180,59 @@ async def continue_chat(
             ]
         })
 
-    # Call external service
+    # Call external service with streaming
     try:
-        response = requests.post(settings.MICRO_URL, json=prompt)
-        response.raise_for_status()
-        response_data = response.json()
-    except requests.RequestException as e:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                settings.MICRO_URL,
+                json=prompt,
+                timeout=None
+            )
+            response.raise_for_status()
+            
+            # Create chat entry with initial data
+            db_chat = Chat(
+                id=str(uuid.uuid4()),
+                user_id=current_user.id,
+                session_id=session_id,
+                prompt=chat_in.prompt,
+                response="",  # Will be updated as we receive chunks
+                phones=[],    # Will be updated as we receive chunks
+                current_params={}  # Will be updated as we receive chunks
+            )
+            db.add(db_chat)
+            db.commit()
+            
+            return StreamingResponse(
+                stream_response(response),
+                media_type="text/event-stream"
+            )
+            
+    except httpx.RequestError as e:
         raise HTTPException(status_code=500, detail=f"Error calling external service: {str(e)}")
 
-    # Create chat entry
-    db_chat = Chat(
-        id=str(uuid.uuid4()),
-        user_id=current_user.id,
-        session_id=session_id,
-        prompt=chat_in.prompt,
-        response=response_data.get("follow_up_question", [{}])[-1].get("content"),
-        phones=response_data.get("phones", []),
-        current_params=response_data.get("current_params", {})
-    )
-    db.add(db_chat)
-    db.commit()
-    db.refresh(db_chat)
-    return db_chat
+    # # Old non-streaming implementation
+    # try:
+    #     response = requests.post(settings.MICRO_URL, json=prompt)
+    #     response.raise_for_status()
+    #     response_data = response.json()
+    # except requests.RequestException as e:
+    #     raise HTTPException(status_code=500, detail=f"Error calling external service: {str(e)}")
+
+    # # Create chat entry
+    # db_chat = Chat(
+    #     id=str(uuid.uuid4()),
+    #     user_id=current_user.id,
+    #     session_id=session_id,
+    #     prompt=chat_in.prompt,
+    #     response=response_data.get("follow_up_question", [{}])[-1].get("content"),
+    #     phones=response_data.get("phones", []),
+    #     current_params=response_data.get("current_params", {})
+    # )
+    # db.add(db_chat)
+    # db.commit()
+    # db.refresh(db_chat)
+    # return db_chat
 
 @router.get("/user/history", response_model=List[ChatSchema])
 async def get_user_chat_history(
