@@ -329,7 +329,8 @@ async def create_chat(
     except requests.RequestException as e:
         raise HTTPException(status_code=500, detail=f"Error calling external service: {str(e)}")
 
-    # Create chat entry
+    button_text = response_data.get("button_text", "See more")
+
     db_chat = Chat(
         id=str(uuid.uuid4()),
         user_id=current_user.id,
@@ -338,11 +339,15 @@ async def create_chat(
         response=response_data.get("follow_up_question", [{}])[-1].get("content"),
         phones=response_data.get("phones", []),
         current_params=response_data.get("current_params", {})
+        
     )
     db.add(db_chat)
     db.commit()
     db.refresh(db_chat)
-    return db_chat
+    return {
+        **db_chat.__dict__,
+        "button_text": button_text
+    }
 
 @router.post("/{session_id}", response_model=ChatSchema)
 async def continue_chat(
@@ -406,7 +411,8 @@ async def continue_chat(
     except requests.RequestException as e:
         raise HTTPException(status_code=500, detail=f"Error calling external service: {str(e)}")
 
-    # Create chat entry
+    button_text = response_data.get("button_text", "See more")
+
     db_chat = Chat(
         id=str(uuid.uuid4()),
         user_id=current_user.id,
@@ -419,7 +425,10 @@ async def continue_chat(
     db.add(db_chat)
     db.commit()
     db.refresh(db_chat)
-    return db_chat
+    return {
+        **db_chat.__dict__,
+        "button_text": button_text
+    }
 
 @router.get("/user/history", response_model=List[ChatSchema])
 async def get_user_chat_history(

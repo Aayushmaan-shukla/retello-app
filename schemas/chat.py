@@ -17,6 +17,7 @@ class Chat(ChatBase):
     current_params: Dict[str, Any]
     created_at: datetime
     updated_at: datetime
+    button_text: Optional[str] = None
 
     class Config:
         from_attributes = True 
