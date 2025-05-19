@@ -18,7 +18,7 @@ class Session(SessionBase):
     user_id: str
     created_at: datetime
     updated_at: datetime
-    #chats: List[Chat] = [] #for chat history not going with the session 
+    chats: List[Chat] = [] #for chat history not going with the session 
 
     class Config:
         from_attributes = True 
