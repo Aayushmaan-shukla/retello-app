@@ -62,7 +62,7 @@ async def get_sessions(
     current_user: User = Depends(get_current_user)
 ) -> Any:
     sessions = db.query(Session).filter(
-        (Session.user_id == current_user.id) | (Session.is_public == True)
+        Session.user_id == current_user.id
     ).all()
     return sessions
 
