@@ -83,6 +83,7 @@ async def create_chat(
             response.raise_for_status()
             
             # Create chat entry with initial data
+            response_data = response.json()
             db_chat = Chat(
                 id=str(uuid.uuid4()),
                 user_id=current_user.id,
@@ -90,7 +91,8 @@ async def create_chat(
                 prompt=chat_in.prompt,
                 response="",  # Will be updated as we receive chunks
                 phones=[],    # Will be updated as we receive chunks
-                current_params={}  # Will be updated as we receive chunks
+                current_params={},  # Will be updated as we receive chunks
+                button_text=response_data.get("button_text", "See more")  # Add button_text
             )
             db.add(db_chat)
             db.commit()
@@ -191,6 +193,7 @@ async def continue_chat(
             response.raise_for_status()
             
             # Create chat entry with initial data
+            response_data = response.json()
             db_chat = Chat(
                 id=str(uuid.uuid4()),
                 user_id=current_user.id,
@@ -198,7 +201,8 @@ async def continue_chat(
                 prompt=chat_in.prompt,
                 response="",  # Will be updated as we receive chunks
                 phones=[],    # Will be updated as we receive chunks
-                current_params={}  # Will be updated as we receive chunks
+                current_params={},  # Will be updated as we receive chunks
+                button_text=response_data.get("button_text", "See more")  # Add button_text
             )
             db.add(db_chat)
             db.commit()
@@ -338,8 +342,8 @@ async def create_chat(
         prompt=chat_in.prompt,
         response=response_data.get("follow_up_question", [{}])[-1].get("content"),
         phones=response_data.get("phones", []),
-        current_params=response_data.get("current_params", {})
-        
+        current_params=response_data.get("current_params", {}),
+        button_text=button_text
     )
     db.add(db_chat)
     db.commit()
@@ -420,7 +424,8 @@ async def continue_chat(
         prompt=chat_in.prompt,
         response=response_data.get("follow_up_question", [{}])[-1].get("content"),
         phones=response_data.get("phones", []),
-        current_params=response_data.get("current_params", {})
+        current_params=response_data.get("current_params", {}),
+        button_text=button_text
     )
     db.add(db_chat)
     db.commit()

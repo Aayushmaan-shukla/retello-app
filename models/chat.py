@@ -12,6 +12,7 @@ class Chat(Base):
     response = Column(String, nullable=True)
     phones = Column(JSON, default=list)
     current_params = Column(JSON)
+    button_text = Column(String, nullable=True)
     
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     created_at = Column(DateTime, default=func.now())
