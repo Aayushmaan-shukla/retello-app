@@ -50,6 +50,21 @@ def migrate_db():
                 ADD COLUMN IF NOT EXISTS gender VARCHAR;
             """))
 
+        # Check if the button_text column exists in chats table
+        result = connection.execute(text("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name='chats' AND column_name='button_text';
+        """))
+        button_text_exists = result.fetchone() is not None
+
+        if not button_text_exists:
+            # Add button_text column if it doesn't exist
+            connection.execute(text("""
+                ALTER TABLE chats 
+                ADD COLUMN IF NOT EXISTS button_text VARCHAR;
+            """))
+
         connection.commit()
 
 if __name__ == "__main__":
