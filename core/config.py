@@ -29,6 +29,10 @@ class Settings(BaseSettings):
 
     MICRO_URL: str = os.getenv("MICRO_URL", "https://api-microretello.enpointe.io/ask")
 
+    # [NEW] Added on 2024-03-21: Streaming-related settings
+    STREAMING_CHUNK_SIZE: int = int(os.getenv("STREAMING_CHUNK_SIZE", "1024"))  # Size of each chunk in bytes
+    STREAMING_TIMEOUT: int = int(os.getenv("STREAMING_TIMEOUT", "300"))  # Timeout in seconds for streaming responses
+
     # CORS
     BACKEND_CORS_ORIGINS: list = [
         "http://localhost:3000",

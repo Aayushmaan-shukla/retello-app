@@ -1,4 +1,4 @@
-'''from typing import Any, List
+from typing import Any, List
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -19,12 +19,74 @@ from app.models.user import User
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
-async def stream_response(response):
-    """Helper function to stream the response from the external service"""
-    async for chunk in response.aiter_text():
-        if chunk:
-            yield f"data: {chunk}\n\n"
-            await asyncio.sleep(0.01)
+# [NEW] Added on 2024-03-21: Function to update chat in database as chunks arrive
+async def update_chat_in_db(db: Session, chat_id: str, chunk: str):
+    """Update chat response in database as chunks arrive"""
+    chat = db.query(Chat).filter(Chat.id == chat_id).first()
+    if chat:
+        chat.response = (chat.response or "") + chunk
+        db.add(chat)
+        db.commit()
+
+# [NEW] Added on 2024-03-21: Function to handle streaming errors
+async def handle_streaming_error(db: Session, chat_id: str, error: Exception):
+    """Handle streaming errors by updating the chat response"""
+    chat = db.query(Chat).filter(Chat.id == chat_id).first()
+    if chat:
+        chat.response = f"{chat.response}\n\nError occurred: {str(error)}"
+        db.add(chat)
+        db.commit()
+
+# [MODIFIED] Updated on 2024-03-21: Enhanced stream_response function to handle metadata and content types
+async def stream_response(response, db: Session, chat_id: str):
+    """Helper function to stream the response from the external service with database updates"""
+    try:
+        metadata_sent = False
+        full_response = ""
+        
+        async for chunk in response.aiter_text():
+            if chunk:
+                # Process SSE format
+                lines = chunk.split('\n')
+                for line in lines:
+                    if line.startswith('data: '):
+                        data = line[6:]  # Remove 'data: ' prefix
+                        try:
+                            json_data = json.loads(data)
+                            
+                            if json_data.get('type') == 'metadata' and not metadata_sent:
+                                # Handle metadata
+                                metadata = json_data.get('metadata', {})
+                                chat = db.query(Chat).filter(Chat.id == chat_id).first()
+                                if chat:
+                                    chat.phones = metadata.get('phones', [])
+                                    chat.current_params = metadata.get('current_params', {})
+                                    chat.button_text = metadata.get('button_text', 'See more')
+                                    db.add(chat)
+                                    db.commit()
+                                metadata_sent = True
+                                yield f"data: {data}\n\n"
+                                
+                            elif json_data.get('type') == 'content':
+                                # Handle content
+                                content = json_data.get('content', '')
+                                full_response += content
+                                chat = db.query(Chat).filter(Chat.id == chat_id).first()
+                                if chat:
+                                    chat.response = full_response
+                                    db.add(chat)
+                                    db.commit()
+                                yield f"data: {data}\n\n"
+                                
+                        except json.JSONDecodeError:
+                            # If not valid JSON, send as is
+                            yield f"data: {data}\n\n"
+                            
+                await asyncio.sleep(0.01)
+    except Exception as e:
+        # Handle streaming errors
+        await handle_streaming_error(db, chat_id, e)
+        yield f"data: {{'type': 'error', 'content': 'Error occurred: {str(e)}'}}\n\n"
 
 @router.post("", response_model=ChatSchema)
 async def create_chat(
@@ -78,7 +140,7 @@ async def create_chat(
             response = await client.post(
                 settings.MICRO_URL,
                 json=prompt,
-                timeout=None
+                timeout=settings.STREAMING_TIMEOUT  # [NEW] Added timeout from settings
             )
             response.raise_for_status()
             
@@ -90,15 +152,16 @@ async def create_chat(
                 session_id=session_id,
                 prompt=chat_in.prompt,
                 response="",  # Will be updated as we receive chunks
-                phones=[],    # Will be updated as we receive chunks
-                current_params={},  # Will be updated as we receive chunks
-                button_text=response_data.get("button_text", "See more")  # Add button_text
+                phones=response_data.get("phones", []),
+                current_params=response_data.get("current_params", {}),
+                button_text=response_data.get("button_text", "See more")
             )
             db.add(db_chat)
             db.commit()
             
+            # [MODIFIED] Updated to use enhanced stream_response with database updates
             return StreamingResponse(
-                stream_response(response),
+                stream_response(response, db, db_chat.id),
                 media_type="text/event-stream"
             )
             
@@ -188,7 +251,7 @@ async def continue_chat(
             response = await client.post(
                 settings.MICRO_URL,
                 json=prompt,
-                timeout=None
+                timeout=settings.STREAMING_TIMEOUT  # [MODIFIED] Added timeout from settings
             )
             response.raise_for_status()
             
@@ -200,22 +263,23 @@ async def continue_chat(
                 session_id=session_id,
                 prompt=chat_in.prompt,
                 response="",  # Will be updated as we receive chunks
-                phones=[],    # Will be updated as we receive chunks
-                current_params={},  # Will be updated as we receive chunks
-                button_text=response_data.get("button_text", "See more")  # Add button_text
+                phones=response_data.get("phones", []),  # [MODIFIED] Use response data
+                current_params=response_data.get("current_params", {}),  # [MODIFIED] Use response data
+                button_text=response_data.get("button_text", "See more")
             )
             db.add(db_chat)
             db.commit()
             
+            # [MODIFIED] Updated to use enhanced stream_response with database updates
             return StreamingResponse(
-                stream_response(response),
+                stream_response(response, db, db_chat.id),
                 media_type="text/event-stream"
             )
             
     except httpx.RequestError as e:
         raise HTTPException(status_code=500, detail=f"Error calling external service: {str(e)}")
 
-    # # Old non-streaming implementation
+    # # Old non-streaming implementation - kept for reference
     # try:
     #     response = requests.post(settings.MICRO_URL, json=prompt)
     #     response.raise_for_status()
@@ -271,7 +335,8 @@ async def get_session_chat_history(
         Chat.session_id == session_id,
         Chat.user_id == current_user.id
     ).all()
-    return chats '''
+    return chats
+'''
 from typing import Any, List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -468,5 +533,5 @@ async def get_session_chat_history(
         Chat.session_id == session_id,
         Chat.user_id == current_user.id
     ).all()
-    return chats 
+    return chats '''
     

@@ -9,13 +9,14 @@ app = FastAPI(
     openapi_url=f"{settings.API_V1_STR}/openapi.json"
 )
 
-# Set up CORS
+# [MODIFIED] Updated on 2024-03-21: Enhanced CORS settings for streaming support
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.BACKEND_CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Type", "Content-Length", "Transfer-Encoding"]  # Added for streaming support
 )
 
 # Include routers
