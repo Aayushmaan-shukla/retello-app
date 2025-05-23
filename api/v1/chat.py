@@ -232,8 +232,8 @@ async def continue_chat(
 
     # Call external service with streaming
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
+        async with httpx.AsyncClient() as client: #from async to stream
+            async with client.stream(
                 settings.MICRO_URL,
                 json=prompt,
                 timeout=settings.STREAMING_TIMEOUT  # [MODIFIED] Added timeout from settings
