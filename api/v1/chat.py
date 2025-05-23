@@ -55,17 +55,18 @@ async def stream_response(response, db: Session, chat_id: str):
                     elif isinstance(data, dict) and 'content' in data:
                         yield f"data: {json.dumps({'type': 'content', 'content': data['content']})}\n\n"
                     # Handle follow up questions
-                    elif isinstance(data, dict) and 'follow_up_question' in data:
+                    '''elif isinstance(data, dict) and 'follow_up_question' in data:
                         for msg in data['follow_up_question']:
                             if msg.get('role') in ('user', 'assistant'):
-                                yield f"data: {json.dumps({'type': 'content', 'content': msg.get('content', '')})}\n\n"
+                                yield f"data: {json.dumps({'type': 'content', 'content': msg.get('content', '')})}\n\n" 
                     # Handle raw content
                     else:
-                        yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
+                        yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"'''
+                    
                 except json.JSONDecodeError:
                     # If it's not JSON, treat it as raw content
                     yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
-            await asyncio.sleep(0.01)
+            #await asyncio.sleep(0.01)
     except Exception as e:
         # Handle streaming errors
         print("[DEBUG] Streaming error:", str(e))
