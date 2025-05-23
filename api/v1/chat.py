@@ -42,11 +42,12 @@ async def stream_response(response, db: Session, chat_id: str):
     """Helper function to stream the response from the external service with database updates"""
     try:
         async for chunk in response.aiter_text():
-            print("[DEBUG] Received chunk:", repr(chunk))
+            #print("[DEBUG] Received chunk:", repr(chunk))
             if chunk:
                 try:
+                    print(chunk)
                     data = json.loads(chunk)
-                    print(data)
+                    #print(data)
                     # Handle metadata
                     if isinstance(data, dict) and 'metadata' in data:
                         yield f"data: {json.dumps({'type': 'metadata', 'metadata': data['metadata']})}\n\n"
