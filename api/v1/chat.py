@@ -88,6 +88,24 @@ async def stream_response(response, db: Session, chat_id: str):
         await handle_streaming_error(db, chat_id, e)
         yield f"data: {{'type': 'error', 'content': 'Error occurred: {str(e)}'}}\n\n"
 
+# [MODIFIED] Streaming wrapper to keep stream open
+async def stream_response_wrapper(client, url, prompt, db, chat_id):
+    async with client.stream('POST', url, json=prompt, timeout=settings.STREAMING_TIMEOUT) as response:
+        response.raise_for_status()
+        # Create chat entry with initial empty values
+        db_chat = Chat(
+            id=chat_id,
+            user_id=None,  # Will be set outside
+            session_id=None,  # Will be set outside
+            prompt=None,  # Will be set outside
+            response="",
+            phones=[],
+            current_params={},
+            button_text="See more"
+        )
+        async for chunk in stream_response(response, db, chat_id):
+            yield chunk
+
 @router.post("", response_model=ChatSchema)
 async def create_chat(
     *,
@@ -134,57 +152,31 @@ async def create_chat(
         ]
     }
 
-    # Call external service with streaming
     try:
         async with httpx.AsyncClient() as client:
-            async with client.stream('POST', settings.MICRO_URL, json=prompt, timeout=settings.STREAMING_TIMEOUT) as response:
-                response.raise_for_status()
-                
-                # Create chat entry with initial empty values
-                db_chat = Chat(
-                    id=str(uuid.uuid4()),
-                    user_id=current_user.id,
-                    session_id=session_id,
-                    prompt=chat_in.prompt,
-                    response="",  # Will be updated as we receive chunks
-                    phones=[],  # Will be updated from metadata
-                    current_params={},  # Will be updated from metadata
-                    button_text="See more"  # Default value, will be updated from metadata
-                )
-                db.add(db_chat)
-                db.commit()
-                
-                # Return streaming response
-                return StreamingResponse(
-                    stream_response(response, db, db_chat.id),
-                    media_type="text/event-stream"
-                )
-            
+            # Create chat entry with initial empty values
+            chat_id = str(uuid.uuid4())
+            db_chat = Chat(
+                id=chat_id,
+                user_id=current_user.id,
+                session_id=session_id,
+                prompt=chat_in.prompt,
+                response="",  # Will be updated as we receive chunks
+                phones=[],  # Will be updated from metadata
+                current_params={},  # Will be updated from metadata
+                button_text="See more"  # Default value, will be updated from metadata
+            )
+            db.add(db_chat)
+            db.commit()
+
+            # Return streaming response, keeping the stream open
+            return StreamingResponse(
+                stream_response_wrapper(client, settings.MICRO_URL, prompt, db, chat_id),
+                media_type="text/event-stream"
+            )
+
     except httpx.RequestError as e:
         raise HTTPException(status_code=500, detail=f"Error calling external service: {str(e)}")
-
-    # # Old non-streaming implementation
-    # try:
-    #     response = requests.post(settings.MICRO_URL, json=prompt)
-    #     response.raise_for_status()
-    #     response_data = response.json()
-    # except requests.RequestException as e:
-    #     raise HTTPException(status_code=500, detail=f"Error calling external service: {str(e)}")
-
-    # # Create chat entry
-    # db_chat = Chat(
-    #     id=str(uuid.uuid4()),
-    #     user_id=current_user.id,
-    #     session_id=session_id,
-    #     prompt=chat_in.prompt,
-    #     response=response_data.get("follow_up_question", [{}])[-1].get("content"),
-    #     phones=response_data.get("phones", []),
-    #     current_params=response_data.get("current_params", {})
-    # )
-    # db.add(db_chat)
-    # db.commit()
-    # db.refresh(db_chat)
-    # return db_chat
 
 @router.post("/{session_id}", response_model=ChatSchema)
 async def continue_chat(
