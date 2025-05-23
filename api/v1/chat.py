@@ -52,7 +52,7 @@ async def stream_response(response, db: Session, chat_id: str):
                     if isinstance(data, dict) and 'metadata' in data:
                         yield f"data: {json.dumps({'type': 'metadata', 'metadata': data['metadata']})}\n\n"
                     # Handle content
-                    if isinstance(data, dict) and 'content' in data:
+                    elif isinstance(data, dict) and 'content' in data:
                         yield f"data: {json.dumps({'type': 'content', 'content': data['content']})}\n\n"
                     # Handle follow up questions
                     elif isinstance(data, dict) and 'follow_up_question' in data:
