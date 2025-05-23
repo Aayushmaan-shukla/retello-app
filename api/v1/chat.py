@@ -41,22 +41,20 @@ async def handle_streaming_error(db: Session, chat_id: str, error: Exception):
 async def stream_response(response, db: Session, chat_id: str):
     """Helper function to stream the response from the external service with database updates"""
     try:
-        metadata_sent = False
-        full_response = ""
-        
         async for chunk in response.aiter_text():
             print("[DEBUG] Received chunk:", repr(chunk))
             if chunk:
-                # Process SSE format
+                # Try to process as before
                 lines = chunk.split('\n')
+                yielded = False
                 for line in lines:
                     if line.startswith('data: '):
-                        data = line[6:]  # Remove 'data: ' prefix
+                        data = line[6:]
                         try:
                             json_data = json.loads(data)
                             print("[DEBUG] Parsed JSON data:", json_data)
                             
-                            if json_data.get('type') == 'metadata' and not metadata_sent:
+                            if json_data.get('type') == 'metadata' and not yielded:
                                 # Handle metadata
                                 metadata = json_data.get('metadata', {})
                                 chat = db.query(Chat).filter(Chat.id == chat_id).first()
@@ -66,14 +64,14 @@ async def stream_response(response, db: Session, chat_id: str):
                                     chat.button_text = metadata.get('button_text', 'See more')
                                     db.add(chat)
                                     db.commit()
-                                metadata_sent = True
                                 print("[DEBUG] Yielding metadata:", data)
                                 yield f"data: {data}\n\n"
+                                yielded = True
                                 
                             elif json_data.get('type') == 'content':
                                 # Handle content
                                 content = json_data.get('content', '')
-                                full_response += content
+                                full_response = content
                                 chat = db.query(Chat).filter(Chat.id == chat_id).first()
                                 if chat:
                                     chat.response = full_response
@@ -81,12 +79,17 @@ async def stream_response(response, db: Session, chat_id: str):
                                     db.commit()
                                 print("[DEBUG] Yielding content:", data)
                                 yield f"data: {data}\n\n"
+                                yielded = True
                                 
                         except json.JSONDecodeError:
                             # If not valid JSON, send as is
                             print("[DEBUG] Yielding non-JSON data:", data)
                             yield f"data: {data}\n\n"
-                await asyncio.sleep(0.01)
+                            yielded = True
+                # If nothing was yielded, yield the raw chunk
+                if not yielded:
+                    yield f"data: {chunk}\n\n"
+            await asyncio.sleep(0.01)
     except Exception as e:
         # Handle streaming errors
         print("[DEBUG] Streaming error:", str(e))
