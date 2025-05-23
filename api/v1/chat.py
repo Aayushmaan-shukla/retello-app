@@ -233,34 +233,34 @@ async def continue_chat(
     # Call external service with streaming
     try:
         async with httpx.AsyncClient() as client: #from async to stream
-            async with client.stream(
+            async with client.stream('POST',
                 settings.MICRO_URL,
                 json=prompt,
                 timeout=settings.STREAMING_TIMEOUT  # [MODIFIED] Added timeout from settings
-            )
-            response.raise_for_status()
+            ) as response:
+                response.raise_for_status()
             
             # Create chat entry with initial data
-            response_data = response.json()
-            db_chat = Chat(
-                id=str(uuid.uuid4()),
-                user_id=current_user.id,
-                session_id=session_id,
-                prompt=chat_in.prompt,
-                response="",  # Will be updated as we receive chunks
-                phones=response_data.get("phones", []),  # [MODIFIED] Use response data
-                current_params=response_data.get("current_params", {}),  # [MODIFIED] Use response data
-                button_text=response_data.get("button_text", "See more")
-            )
-            db.add(db_chat)
-            db.commit()
-            
-            # [MODIFIED] Updated to use enhanced stream_response with database updates
-            return StreamingResponse(
-                stream_response(response, db, db_chat.id),
-                media_type="text/event-stream"
-            )
-            
+                response_data = response.json()
+                db_chat = Chat(
+                    id=str(uuid.uuid4()),
+                    user_id=current_user.id,
+                    session_id=session_id,
+                    prompt=chat_in.prompt,
+                    response="",  # Will be updated as we receive chunks
+                    phones=response_data.get("phones", []),  # [MODIFIED] Use response data
+                    current_params=response_data.get("current_params", {}),  # [MODIFIED] Use response data
+                    button_text=response_data.get("button_text", "See more")
+                )
+                db.add(db_chat)
+                db.commit()
+                
+                # [MODIFIED] Updated to use enhanced stream_response with database updates
+                return StreamingResponse(
+                    stream_response(response, db, db_chat.id),
+                    media_type="text/event-stream"
+                )
+                
     except httpx.RequestError as e:
         raise HTTPException(status_code=500, detail=f"Error calling external service: {str(e)}")
 
