@@ -44,48 +44,25 @@ async def stream_response(response, db: Session, chat_id: str):
         async for chunk in response.aiter_text():
             print("[DEBUG] Received chunk:", repr(chunk))
             if chunk:
-                # Try to process as before
-                lines = chunk.split('\n')
                 yielded = False
-                for line in lines:
-                    if line.startswith('data: '):
-                        data = line[6:]
-                        try:
-                            json_data = json.loads(data)
-                            print("[DEBUG] Parsed JSON data:", json_data)
-                            
-                            if json_data.get('type') == 'metadata' and not yielded:
-                                # Handle metadata
-                                metadata = json_data.get('metadata', {})
-                                chat = db.query(Chat).filter(Chat.id == chat_id).first()
-                                if chat:
-                                    chat.phones = metadata.get('phones', [])
-                                    chat.current_params = metadata.get('current_params', {})
-                                    chat.button_text = metadata.get('button_text', 'See more')
-                                    db.add(chat)
-                                    db.commit()
-                                print("[DEBUG] Yielding metadata:", data)
-                                yield f"data: {data}\n\n"
-                                yielded = True
-                                
-                            elif json_data.get('type') == 'content':
-                                # Handle content
-                                content = json_data.get('content', '')
-                                full_response = content
-                                chat = db.query(Chat).filter(Chat.id == chat_id).first()
-                                if chat:
-                                    chat.response = full_response
-                                    db.add(chat)
-                                    db.commit()
-                                print("[DEBUG] Yielding content:", data)
-                                yield f"data: {data}\n\n"
-                                yielded = True
-                                
-                        except json.JSONDecodeError:
-                            # If not valid JSON, send as is
-                            print("[DEBUG] Yielding non-JSON data:", data)
-                            yield f"data: {data}\n\n"
-                            yielded = True
+                try:
+                    data = json.loads(chunk)
+                    # If it's a list, look for 'follow_up_question'
+                    if isinstance(data, list):
+                        for item in data:
+                            if 'follow_up_question' in item:
+                                for msg in item['follow_up_question']:
+                                    if msg.get('role') in ('user', 'assistant'):
+                                        print(f"[DEBUG] Yielding {msg.get('role')} message:", msg)
+                                        yield f"data: {json.dumps(msg)}\n\n"
+                                        yielded = True
+                    # If it's a dict with 'role', yield if user/assistant
+                    elif isinstance(data, dict) and data.get('role') in ('user', 'assistant'):
+                        print(f"[DEBUG] Yielding {data.get('role')} message:", data)
+                        yield f"data: {json.dumps(data)}\n\n"
+                        yielded = True
+                except Exception as e:
+                    print("[DEBUG] Exception or non-JSON chunk, yielding raw chunk:", str(e))
                 # If nothing was yielded, yield the raw chunk
                 if not yielded:
                     yield f"data: {chunk}\n\n"
