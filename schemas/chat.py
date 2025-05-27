@@ -4,7 +4,6 @@ from datetime import datetime
 
 class ChatBase(BaseModel):
     prompt: str
-    current_params: Optional[Dict[str, Any]] = {}
 
 class ChatCreate(ChatBase):
     pass
