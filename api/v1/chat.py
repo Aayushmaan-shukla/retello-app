@@ -248,7 +248,7 @@ async def create_chat(
 
     return StreamingResponse(
         stream_response_wrapper(
-            f"{settings.PROCESSING_SERVICE_URL}/process",
+            settings.MICRO_URL,
             json_payload,
             db,
             chat.id
@@ -314,7 +314,7 @@ async def continue_chat(
 
     return StreamingResponse(
         stream_response_wrapper(
-            f"{settings.PROCESSING_SERVICE_URL}/process",
+            settings.MICRO_URL,
             json_payload,
             db,
             chat.id
