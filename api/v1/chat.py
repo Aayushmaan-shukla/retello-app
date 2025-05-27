@@ -182,7 +182,7 @@ async def stream_response_wrapper(url: str, json_payload: dict, db: Session, cha
             yield f"data: {json.dumps({'type': 'error', 'content': f'An unexpected error occurred: {str(e_unexpected)}'})}\n\n"
 
 
-@router.post("", response_model=None) # response_model=ChatSchema is misleading for StreamingResponse
+@router.post("", response_model=None)
 async def create_chat(
     *,
     db: Session = Depends(get_db),
@@ -198,54 +198,65 @@ async def create_chat(
         DBSession.created_at >= recent_time
     ).order_by(DBSession.created_at.desc()).first()
 
-    if recent_db_session:
-        session_id = recent_db_session.id
-    else:
-        new_db_session = DBSession(
+    if not recent_db_session:
+        # Create new session if none exists
+        recent_db_session = DBSession(
             id=str(uuid.uuid4()),
             user_id=current_user.id,
-            name=f"Chat Session {datetime.now().strftime('%Y-%m-%d %H:%M')}", # Consider UTC if consistency is key
-            is_public=False,
-            created_at=datetime.utcnow(), # Ensure this is UTC
-            updated_at=datetime.utcnow()  # Ensure this is UTC
+            name="New Chat Session"
         )
-        db.add(new_db_session)
-        db.commit() # Commit session first to ensure session_id is valid
-        session_id = new_db_session.id
+        db.add(recent_db_session)
+        db.commit()
+        db.refresh(recent_db_session)
 
-    prompt_payload = {
-        "user_input": chat_in.prompt,
-        "conversation": [
-            {
-                "role": "system",
-                "content": "You are an intelligent phone recommendation assistant by a company called \"Retello\"\nAvailable features and their descriptions:\n{\n  \"battery_capacity\": \"Battery size in mAh\",\n  \"main_camera\": \"Main camera resolution in MP\",\n  \"front_camera\": \"Front camera resolution in MP\",\n  \"screen_size\": \"Screen size in inches\",\n  \"charging_speed\": \"Charging speed in watts\",\n  \"os\": \"Android version\",\n  \"camera_count\": \"Number of cameras\",\n  \"sensors\": \"Available sensors\",\n  \"display_type\": \"Display technology\",\n  \"network\": \"Network connectivity\",\n  \"chipset\": \"processor/chipset name\",\n  \"preferred_brands\": \"names of the brands preferred by a user\",\n  \"price_range\": \"price a user is willing to pay\"\n}\n\nMap user requirements to these specific features if possible. Consider both explicit and implicit needs."
-            },
-            {"role": "user", "content": chat_in.prompt}
-        ]
+    # Create new chat entry
+    chat = Chat(
+        id=str(uuid.uuid4()),
+        user_id=current_user.id,
+        session_id=recent_db_session.id,
+        prompt=chat_in.prompt,
+        current_params=chat_in.current_params or {}
+    )
+    db.add(chat)
+    db.commit()
+    db.refresh(chat)
+
+    # Get chat history for context
+    chat_history = db.query(Chat).filter(
+        Chat.session_id == recent_db_session.id
+    ).order_by(Chat.created_at.asc()).all()
+
+    # Prepare chat history for the processing layer
+    history_context = [
+        {"role": "user", "content": c.prompt} for c in chat_history
+    ]
+    if chat_history:
+        history_context.extend([
+            {"role": "assistant", "content": c.response} 
+            for c in chat_history if c.response
+        ])
+
+    # Add current message
+    history_context.append({"role": "user", "content": chat_in.prompt})
+
+    # Prepare payload with history
+    json_payload = {
+        "prompt": chat_in.prompt,
+        "current_params": chat_in.current_params or {},
+        "chat_history": history_context
     }
 
-    chat_id = str(uuid.uuid4())
-    db_chat = Chat(
-        id=chat_id,
-        user_id=current_user.id,
-        session_id=session_id,
-        prompt=chat_in.prompt,
-        response="",
-        phones=[],
-        current_params={},
-        button_text="See more", # Default value
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow()
-    )
-    db.add(db_chat)
-    db.commit() # Commit chat entry so stream_response can find it
-
     return StreamingResponse(
-        stream_response_wrapper(settings.MICRO_URL, prompt_payload, db, chat_id),
+        stream_response_wrapper(
+            f"{settings.PROCESSING_SERVICE_URL}/process",
+            json_payload,
+            db,
+            chat.id
+        ),
         media_type="text/event-stream"
     )
 
-@router.post("/{session_id}", response_model=None) # response_model=ChatSchema is misleading for StreamingResponse
+@router.post("/{session_id}", response_model=None)
 async def continue_chat(
     *,
     db: Session = Depends(get_db),
@@ -254,75 +265,60 @@ async def continue_chat(
     current_user: User = Depends(get_current_user)
 ) -> StreamingResponse:
     """
-    Continue an existing chat session. Streams response.
+    Continue an existing chat session with a new message. Streams response.
     """
-    db_session = db.query(DBSession).filter(DBSession.id == session_id).first()
-    if not db_session:
+    # Verify session exists and belongs to user
+    session = db.query(DBSession).filter(
+        DBSession.id == session_id,
+        DBSession.user_id == current_user.id
+    ).first()
+    if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    if db_session.user_id != current_user.id:
-        raise HTTPException(
-            status_code=403,
-            detail="You are not authorized to chat in this session"
-        )
 
-    db_session.updated_at = datetime.utcnow()
-    db.add(db_session) # Handled by commit below with chat
-
-    prev_chats = db.query(Chat).filter(Chat.session_id == session_id).order_by(Chat.created_at).all() # Order to maintain conversation
-    formatted_chats = []
-    for chat_item in prev_chats:
-        formatted_chats.extend([
-            {"role": "user", "content": chat_item.prompt},
-            {"role": "assistant", "content": chat_item.response or "I am sorry, I don't have a response for that."}
-        ])
-
-    prompt_payload = {
-        "user_input": chat_in.prompt
-    }
-    
-    if formatted_chats:
-        last_chat = prev_chats[-1] if prev_chats else None
-        prompt_payload.update({
-            "current_params": last_chat.current_params if last_chat and last_chat.current_params else None, # Ensure current_params is not None if last_chat exists but has no params
-            "conversation": [
-                {
-                    "role": "system",
-                    "content": "You are an intelligent phone recommendation assistant by a company called \"Retello\"\nAvailable features and their descriptions:\n{\n  \"battery_capacity\": \"Battery size in mAh\",\n  \"main_camera\": \"Main camera resolution in MP\",\n  \"front_camera\": \"Front camera resolution in MP\",\n  \"screen_size\": \"Screen size in inches\",\n  \"charging_speed\": \"Charging speed in watts\",\n  \"os\": \"Android version\",\n  \"camera_count\": \"Number of cameras\",\n  \"sensors\": \"Available sensors\",\n  \"display_type\": \"Display technology\",\n  \"network\": \"Network connectivity\",\n  \"chipset\": \"processor/chipset name\",\n  \"preferred_brands\": \"names of the brands preferred by a user\",\n  \"price_range\": \"price a user is willing to pay\"\n}\n\nMap user requirements to these specific features if possible. Consider both explicit and implicit needs."
-                },
-                *formatted_chats,
-                {"role": "user", "content": chat_in.prompt}
-            ]
-        })
-    else: # If no previous chats, it's like a new chat but in an existing session
-        prompt_payload.update({
-            "conversation": [
-                 {
-                    "role": "system",
-                    "content": "You are an intelligent phone recommendation assistant by a company called \"Retello\"\nAvailable features and their descriptions:\n{\n  \"battery_capacity\": \"Battery size in mAh\",\n  \"main_camera\": \"Main camera resolution in MP\",\n  \"front_camera\": \"Front camera resolution in MP\",\n  \"screen_size\": \"Screen size in inches\",\n  \"charging_speed\": \"Charging speed in watts\",\n  \"os\": \"Android version\",\n  \"camera_count\": \"Number of cameras\",\n  \"sensors\": \"Available sensors\",\n  \"display_type\": \"Display technology\",\n  \"network\": \"Network connectivity\",\n  \"chipset\": \"processor/chipset name\",\n  \"preferred_brands\": \"names of the brands preferred by a user\",\n  \"price_range\": \"price a user is willing to pay\"\n}\n\nMap user requirements to these specific features if possible. Consider both explicit and implicit needs."
-                },
-                {"role": "user", "content": chat_in.prompt}
-            ]
-        })
-
-
-    chat_id = str(uuid.uuid4())
-    db_chat = Chat(
-        id=chat_id,
+    # Create new chat entry
+    chat = Chat(
+        id=str(uuid.uuid4()),
         user_id=current_user.id,
         session_id=session_id,
         prompt=chat_in.prompt,
-        response="",
-        phones=[],
-        current_params={},
-        button_text="See more", # Default value
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow()
+        current_params=chat_in.current_params or {}
     )
-    db.add(db_chat)
-    db.commit() # Commit chat entry and session update
+    db.add(chat)
+    db.commit()
+    db.refresh(chat)
+
+    # Get chat history for context
+    chat_history = db.query(Chat).filter(
+        Chat.session_id == session_id
+    ).order_by(Chat.created_at.asc()).all()
+
+    # Prepare chat history for the processing layer
+    history_context = [
+        {"role": "user", "content": c.prompt} for c in chat_history
+    ]
+    if chat_history:
+        history_context.extend([
+            {"role": "assistant", "content": c.response} 
+            for c in chat_history if c.response
+        ])
+
+    # Add current message
+    history_context.append({"role": "user", "content": chat_in.prompt})
+
+    # Prepare payload with history
+    json_payload = {
+        "prompt": chat_in.prompt,
+        "current_params": chat_in.current_params or {},
+        "chat_history": history_context
+    }
 
     return StreamingResponse(
-        stream_response_wrapper(settings.MICRO_URL, prompt_payload, db, chat_id),
+        stream_response_wrapper(
+            f"{settings.PROCESSING_SERVICE_URL}/process",
+            json_payload,
+            db,
+            chat.id
+        ),
         media_type="text/event-stream"
     )
 
