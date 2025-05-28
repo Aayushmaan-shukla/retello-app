@@ -370,8 +370,7 @@ async def get_session_chat_history(
 
 @router.post("/generate-chat-name")
 async def generate_chat_name(
-    *,
-    chat_history: ChatHistory,
+    request: ChatHistory,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ) -> dict:
@@ -379,11 +378,15 @@ async def generate_chat_name(
     Generate a name for a chat session based on the chat history.
     """
     try:
+        print("Received request body:", request.dict())  # Debug print
+        
         # Convert chat history to the format expected by the chat name generator
         formatted_history = [
             {"role": msg.role, "content": msg.content}
-            for msg in chat_history.chat_history
+            for msg in request.chat_history
         ]
+        
+        print("Formatted history:", formatted_history)  # Debug print
         
         # Call the chat name generator service
         async with httpx.AsyncClient() as client:
@@ -398,11 +401,13 @@ async def generate_chat_name(
         return {"summary": result.get("summary", "New Chat")}
         
     except httpx.HTTPStatusError as e:
+        print("HTTP Status Error:", str(e))  # Debug print
         raise HTTPException(
             status_code=e.response.status_code,
             detail=f"Error from chat name generator service: {e.response.text}"
         )
     except Exception as e:
+        print("General Error:", str(e))  # Debug print
         raise HTTPException(
             status_code=500,
             detail=f"Error generating chat name: {str(e)}"
