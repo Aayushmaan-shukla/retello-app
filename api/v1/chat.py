@@ -395,10 +395,11 @@ async def generate_chat_name(
                 json={"chat_history": formatted_history},
                 timeout=settings.STREAMING_TIMEOUT
             )
-            response.raise_for_status() # Raise an exception for bad status codes
             
-            # Read the entire response body before accessing JSON
+            # Read the entire response body *before* checking status or accessing JSON
             await response.aread()
+
+            response.raise_for_status() # Raise an exception for bad status codes only after reading
             
             result = response.json()
             
@@ -406,15 +407,17 @@ async def generate_chat_name(
         
     except httpx.HTTPStatusError as e:
         print("HTTP Status Error:", str(e))  # Debug print
-        # Attempt to read response body for more detail in the error message
-        try:
-            error_detail = e.response.text
-        except httpx.ResponseNotRead:
-             error_detail = "<Response body not read>"
-        
+        error_detail = f"Error from chat name generator service: Status {e.response.status_code}"
+        # Safely attempt to get response text if available
+        if e.response and e.response._content:
+             try:
+                 error_detail += f" - {e.response.text}"
+             except Exception:
+                 pass # Ignore if reading text fails here
+
         raise HTTPException(
             status_code=e.response.status_code,
-            detail=f"Error from chat name generator service: {error_detail}"
+            detail=error_detail
         )
     except Exception as e:
         print("General Error:", str(e))  # Debug print
