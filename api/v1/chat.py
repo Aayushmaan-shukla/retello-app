@@ -8,7 +8,6 @@ import json
 # import asyncio # No longer needed directly in stream_response
 import httpx
 from datetime import datetime, timedelta
-from pydantic import BaseModel
 
 from app.core.config import settings
 from app.db.base import get_db
@@ -19,14 +18,6 @@ from app.api.v1.auth import get_current_user
 from app.models.user import User
 
 router = APIRouter(prefix="/chat", tags=["chat"])
-
-# Add ChatHistory model for generate-chat-name endpoint
-class ChatMessage(BaseModel):
-    role: str
-    content: str
-
-class ChatHistory(BaseModel):
-    chat_history: List[ChatMessage]
 
 # [NEW] Added on 2024-03-21: Function to update chat in database as chunks arrive
 async def update_chat_in_db(db: Session, chat_id: str, chunk_text: str):
@@ -167,35 +158,20 @@ async def stream_response_wrapper(url: str, json_payload: dict, db: Session, cha
                 json=json_payload,
                 timeout=settings.STREAMING_TIMEOUT
             ) as response:
-                # Note: We do NOT call response.read() or response.aread() here
-                # as we are specifically handling a streaming response.
-                # raise_for_status will be called, and if it errors, we handle
-                # reading the body safely in the exception block.
                 response.raise_for_status()  # Check for HTTP errors (4xx, 5xx) before streaming
-                
-                # If status is OK, proceed with streaming the content chunks
                 async for chunk_to_forward in stream_response(response, db, chat_id):
                     yield chunk_to_forward
-
         except httpx.HTTPStatusError as e_http_status:
             print(f"[ERROR CHAT.PY] stream_response_wrapper - HTTPStatusError: {e_http_status.request.url} - Status {e_http_status.response.status_code}")
             await handle_streaming_error(db, chat_id, e_http_status)
-            
             error_content = f'External service error: {e_http_status.response.status_code}'
-            
-            # Safely attempt to read response body for more detail if it exists
-            error_body_detail = ""
-            if e_http_status.response and not e_http_status.response._content_is_stream:
-                try:
-                    # Use response.text for synchronous access after an error in a stream
-                    # Need to await reading first if it was a stream that errored early
-                    await e_http_status.response.aread()
-                    error_body_detail = f" - {e_http_status.response.text}"
-                except Exception: # Catch any error during reading
-                    error_body_detail = " - <Could not read error response body>"
+            try: # Try to get more details from response if JSON
+                error_details = e_http_status.response.json()
+                error_content += f" - {json.dumps(error_details)}"
+            except json.JSONDecodeError:
+                error_content += f" - {e_http_status.response.text[:200]}" # First 200 chars of text response
 
-            yield f"data: {json.dumps({'type': 'error', 'content': f'{error_content}{error_body_detail}'})}\n\n"
-
+            yield f"data: {json.dumps({'type': 'error', 'content': error_content})}\n\n"
         except httpx.RequestError as e_request: # Covers network errors, DNS failures, timeouts before response, etc.
             print(f"[ERROR CHAT.PY] stream_response_wrapper - RequestError: {e_request.request.url} - {e_request}")
             await handle_streaming_error(db, chat_id, e_request)
@@ -382,61 +358,3 @@ async def get_session_chat_history(
         Chat.session_id == session_id
     ).order_by(Chat.created_at).all() # Order by creation time for chronological history
     return chats
-
-@router.post("/generate-chat-name")
-async def generate_chat_name(
-    request: ChatHistory,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-) -> dict:
-    """
-    Generate a name for a chat session based on the chat history.
-    """
-    try:
-        print("Received request body:", request.dict())  # Debug print
-        
-        # Convert chat history to the format expected by the chat name generator
-        formatted_history = [
-            {"role": msg.role, "content": msg.content}
-            for msg in request.chat_history
-        ]
-        
-        print("Formatted history:", formatted_history)  # Debug print
-        
-        # Call the chat name generator service
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{settings.MICRO_URL}/generate-chat-name",
-                json={"chat_history": formatted_history},
-                timeout=settings.STREAMING_TIMEOUT
-            )
-            
-            # Read the entire response body *before* checking status or accessing JSON
-            await response.aread()
-
-            response.raise_for_status() # Raise an exception for bad status codes only after reading
-            
-            result = response.json()
-            
-        return {"summary": result.get("summary", "New Chat")}
-        
-    except httpx.HTTPStatusError as e:
-        print("HTTP Status Error:", str(e))  # Debug print
-        error_detail = f"Error from chat name generator service: Status {e.response.status_code}"
-        # Safely attempt to get response text if available
-        if e.response and e.response._content:
-             try:
-                 error_detail += f" - {e.response.text}"
-             except Exception:
-                 pass # Ignore if reading text fails here
-
-        raise HTTPException(
-            status_code=e.response.status_code,
-            detail=error_detail
-        )
-    except Exception as e:
-        print("General Error:", str(e))  # Debug print
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error generating chat name: {str(e)}"
-        )
