@@ -8,6 +8,7 @@ import json
 # import asyncio # No longer needed directly in stream_response
 import httpx
 from datetime import datetime, timedelta
+from pydantic import BaseModel
 
 from app.core.config import settings
 from app.db.base import get_db
@@ -18,6 +19,14 @@ from app.api.v1.auth import get_current_user
 from app.models.user import User
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+
+# Add ChatHistory model for generate-chat-name endpoint
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+class ChatHistory(BaseModel):
+    chat_history: List[ChatMessage]
 
 # [NEW] Added on 2024-03-21: Function to update chat in database as chunks arrive
 async def update_chat_in_db(db: Session, chat_id: str, chunk_text: str):
@@ -358,3 +367,43 @@ async def get_session_chat_history(
         Chat.session_id == session_id
     ).order_by(Chat.created_at).all() # Order by creation time for chronological history
     return chats
+
+@router.post("/generate-chat-name")
+async def generate_chat_name(
+    *,
+    chat_history: ChatHistory,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> dict:
+    """
+    Generate a name for a chat session based on the chat history.
+    """
+    try:
+        # Convert chat history to the format expected by the chat name generator
+        formatted_history = [
+            {"role": msg.role, "content": msg.content}
+            for msg in chat_history.chat_history
+        ]
+        
+        # Call the chat name generator service
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{settings.MICRO_URL}/generate-chat-name",
+                json={"chat_history": formatted_history},
+                timeout=settings.STREAMING_TIMEOUT
+            )
+            response.raise_for_status()
+            result = response.json()
+            
+        return {"summary": result.get("summary", "New Chat")}
+        
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(
+            status_code=e.response.status_code,
+            detail=f"Error from chat name generator service: {e.response.text}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generating chat name: {str(e)}"
+        )
