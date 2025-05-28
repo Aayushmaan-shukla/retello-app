@@ -167,20 +167,35 @@ async def stream_response_wrapper(url: str, json_payload: dict, db: Session, cha
                 json=json_payload,
                 timeout=settings.STREAMING_TIMEOUT
             ) as response:
+                # Note: We do NOT call response.read() or response.aread() here
+                # as we are specifically handling a streaming response.
+                # raise_for_status will be called, and if it errors, we handle
+                # reading the body safely in the exception block.
                 response.raise_for_status()  # Check for HTTP errors (4xx, 5xx) before streaming
+                
+                # If status is OK, proceed with streaming the content chunks
                 async for chunk_to_forward in stream_response(response, db, chat_id):
                     yield chunk_to_forward
+
         except httpx.HTTPStatusError as e_http_status:
             print(f"[ERROR CHAT.PY] stream_response_wrapper - HTTPStatusError: {e_http_status.request.url} - Status {e_http_status.response.status_code}")
             await handle_streaming_error(db, chat_id, e_http_status)
+            
             error_content = f'External service error: {e_http_status.response.status_code}'
-            try: # Try to get more details from response if JSON
-                error_details = e_http_status.response.json()
-                error_content += f" - {json.dumps(error_details)}"
-            except json.JSONDecodeError:
-                error_content += f" - {e_http_status.response.text[:200]}" # First 200 chars of text response
+            
+            # Safely attempt to read response body for more detail if it exists
+            error_body_detail = ""
+            if e_http_status.response and not e_http_status.response._content_is_stream:
+                try:
+                    # Use response.text for synchronous access after an error in a stream
+                    # Need to await reading first if it was a stream that errored early
+                    await e_http_status.response.aread()
+                    error_body_detail = f" - {e_http_status.response.text}"
+                except Exception: # Catch any error during reading
+                    error_body_detail = " - <Could not read error response body>"
 
-            yield f"data: {json.dumps({'type': 'error', 'content': error_content})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'content': f'{error_content}{error_body_detail}'})}\n\n"
+
         except httpx.RequestError as e_request: # Covers network errors, DNS failures, timeouts before response, etc.
             print(f"[ERROR CHAT.PY] stream_response_wrapper - RequestError: {e_request.request.url} - {e_request}")
             await handle_streaming_error(db, chat_id, e_request)
