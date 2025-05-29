@@ -192,14 +192,14 @@ async def create_chat(
     """
     Create a new chat session with the first message. Streams response.
     """
-        master
+    
 
     # Get user input from either prompt or user_input field
     user_input = getattr(chat_in, 'prompt', None) or getattr(chat_in, 'user_input', None)
     if not user_input:
         raise HTTPException(status_code=400, detail="Either 'prompt' or 'user_input' field is required")
 
-        master
+       
     recent_time = datetime.utcnow() - timedelta(minutes=2)
     recent_db_session = db.query(DBSession).filter(
         DBSession.user_id == current_user.id,
@@ -222,11 +222,11 @@ async def create_chat(
         session_id = new_db_session.id
 
     prompt_payload = {
-        master
+        
         "user_input": chat_in.prompt,
 
         "user_input": user_input,
-        master
+        
         "conversation": [
             {
                 "role": "system",
@@ -241,11 +241,11 @@ async def create_chat(
         id=chat_id,
         user_id=current_user.id,
         session_id=session_id,
-        master
+        
         prompt=chat_in.prompt,
 
         prompt=user_input,
-        master
+        
         response="",
         phones=[],
         current_params={},
@@ -300,7 +300,6 @@ async def continue_chat(
         last_chat = prev_chats[-1] if prev_chats else None
         prompt_payload.update({
             "current_params": last_chat.current_params if last_chat and last_chat.current_params else None, # Ensure current_params is not None if last_chat exists but has no params
-        master
             "conversation": [
                 {
                     "role": "system",
@@ -312,27 +311,14 @@ async def continue_chat(
         })
     else: # If no previous chats, it's like a new chat but in an existing session
         prompt_payload.update({
-
-        master
             "conversation": [
-                 {
+                {
                     "role": "system",
                     "content": "You are an intelligent phone recommendation assistant by a company called \"Retello\"\nAvailable features and their descriptions:\n{\n  \"battery_capacity\": \"Battery size in mAh\",\n  \"main_camera\": \"Main camera resolution in MP\",\n  \"front_camera\": \"Front camera resolution in MP\",\n  \"screen_size\": \"Screen size in inches\",\n  \"charging_speed\": \"Charging speed in watts\",\n  \"os\": \"Android version\",\n  \"camera_count\": \"Number of cameras\",\n  \"sensors\": \"Available sensors\",\n  \"display_type\": \"Display technology\",\n  \"network\": \"Network connectivity\",\n  \"chipset\": \"processor/chipset name\",\n  \"preferred_brands\": \"names of the brands preferred by a user\",\n  \"price_range\": \"price a user is willing to pay\"\n}\n\nMap user requirements to these specific features if possible. Consider both explicit and implicit needs."
                 },
                 {"role": "user", "content": chat_in.prompt}
             ]
         })
-    else: # If no previous chats, it's like a new chat but in an existing session
-        prompt_payload.update({
-            "conversation": [
-                 {
-                    "role": "system",
-                    "content": "You are an intelligent phone recommendation assistant by a company called \"Retello\"\nAvailable features and their descriptions:\n{\n  \"battery_capacity\": \"Battery size in mAh\",\n  \"main_camera\": \"Main camera resolution in MP\",\n  \"front_camera\": \"Front camera resolution in MP\",\n  \"screen_size\": \"Screen size in inches\",\n  \"charging_speed\": \"Charging speed in watts\",\n  \"os\": \"Android version\",\n  \"camera_count\": \"Number of cameras\",\n  \"sensors\": \"Available sensors\",\n  \"display_type\": \"Display technology\",\n  \"network\": \"Network connectivity\",\n  \"chipset\": \"processor/chipset name\",\n  \"preferred_brands\": \"names of the brands preferred by a user\",\n  \"price_range\": \"price a user is willing to pay\"\n}\n\nMap user requirements to these specific features if possible. Consider both explicit and implicit needs."
-                },
-                {"role": "user", "content": chat_in.prompt}
-            ]
-        })
-
 
     chat_id = str(uuid.uuid4())
     db_chat = Chat(

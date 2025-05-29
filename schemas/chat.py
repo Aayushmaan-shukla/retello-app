@@ -4,7 +4,7 @@ from datetime import datetime
 
 class ChatBase(BaseModel):
     prompt: Optional[str] = None
-    user_input: Optional[str] = None
+    #user_input: Optional[str] = None
 
 class ChatCreate(ChatBase):
     @property
