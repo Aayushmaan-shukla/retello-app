@@ -9,7 +9,7 @@ class ChatBase(BaseModel):
 class ChatCreate(ChatBase):
     @property
     def input_text(self) -> str:
-        return self.user_input or self.prompt or ""
+        return self.prompt or ""
 
     def __init__(self, **data):
         super().__init__(**data)
