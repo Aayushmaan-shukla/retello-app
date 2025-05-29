@@ -241,11 +241,7 @@ async def create_chat(
         id=chat_id,
         user_id=current_user.id,
         session_id=session_id,
-        
-        prompt=chat_in.prompt,
-
         prompt=user_input,
-        
         response="",
         phones=[],
         current_params={},
