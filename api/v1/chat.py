@@ -192,14 +192,9 @@ async def create_chat(
     """
     Create a new chat session with the first message. Streams response.
     """
-    
+    if not chat_in.prompt:
+        raise HTTPException(status_code=400, detail="'prompt' field is required")
 
-    # Get user input from either prompt or user_input field
-    user_input = getattr(chat_in, 'prompt', None) or getattr(chat_in, 'user_input', None)
-    if not user_input:
-        raise HTTPException(status_code=400, detail="Either 'prompt' or 'user_input' field is required")
-
-       
     recent_time = datetime.utcnow() - timedelta(minutes=2)
     recent_db_session = db.query(DBSession).filter(
         DBSession.user_id == current_user.id,
@@ -222,17 +217,13 @@ async def create_chat(
         session_id = new_db_session.id
 
     prompt_payload = {
-        
         "user_input": chat_in.prompt,
-
-        "user_input": user_input,
-        
         "conversation": [
             {
                 "role": "system",
                 "content": "You are an intelligent phone recommendation assistant by a company called \"Retello\"\nAvailable features and their descriptions:\n{\n  \"battery_capacity\": \"Battery size in mAh\",\n  \"main_camera\": \"Main camera resolution in MP\",\n  \"front_camera\": \"Front camera resolution in MP\",\n  \"screen_size\": \"Screen size in inches\",\n  \"charging_speed\": \"Charging speed in watts\",\n  \"os\": \"Android version\",\n  \"camera_count\": \"Number of cameras\",\n  \"sensors\": \"Available sensors\",\n  \"display_type\": \"Display technology\",\n  \"network\": \"Network connectivity\",\n  \"chipset\": \"processor/chipset name\",\n  \"preferred_brands\": \"names of the brands preferred by a user\",\n  \"price_range\": \"price a user is willing to pay\"\n}\n\nMap user requirements to these specific features if possible. Consider both explicit and implicit needs."
             },
-            {"role": "user", "content": user_input}
+            {"role": "user", "content": chat_in.prompt}
         ]
     }
 
@@ -241,7 +232,7 @@ async def create_chat(
         id=chat_id,
         user_id=current_user.id,
         session_id=session_id,
-        prompt=user_input,
+        prompt=chat_in.prompt,
         response="",
         phones=[],
         current_params={},
