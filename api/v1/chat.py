@@ -297,23 +297,21 @@ async def create_chat(
                 base_system_content += conversation_summary
                 logger.info(f"Added conversation summary to system prompt (queries: {len(recent_user_queries)}, recs: {len(recent_recommendations)})")
         
-        conversation = [
-            {
-                "role": "system",
-                "content": base_system_content
-            }
-        ]
+        # DON'T send system prompt to microservice since it adds its own
+        # Instead, send just the conversation history without system prompt
+        conversation_for_microservice = []
         
         # Add previous conversation history if available
         if formatted_chats:
-            conversation.extend(formatted_chats)
+            conversation_for_microservice.extend(formatted_chats)
+            logger.info(f"Added {len(formatted_chats)} previous messages to conversation for microservice")
         
         # Add current user input
-        conversation.append({"role": "user", "content": chat_in.prompt})
+        conversation_for_microservice.append({"role": "user", "content": chat_in.prompt})
 
         prompt_payload = {
             "user_input": chat_in.prompt,
-            "conversation": conversation
+            "conversation": conversation_for_microservice  # No system prompt
         }
         
         # Try alternative approaches to send conversation history
@@ -334,7 +332,7 @@ async def create_chat(
             # Try embedding context in user_input
             prompt_payload["user_input_with_context"] = context_summary
             prompt_payload["conversation_history"] = formatted_chats  # Alternative parameter name
-            prompt_payload["messages"] = conversation  # Try 'messages' instead of 'conversation'
+            prompt_payload["messages"] = conversation_for_microservice  # Try 'messages' instead of 'conversation'
             
             logger.info(f"Added conversation context to user_input and alternative parameters")
         
@@ -347,17 +345,17 @@ async def create_chat(
 
         chat_id = str(uuid.uuid4())
         logger.info(f"Creating new chat {chat_id} in session {session_id}")
-        logger.info(f"Payload conversation length: {len(conversation)} (including system prompt)")
-        logger.info(f"Sending payload to microservice: user_input='{chat_in.prompt}', conversation_length={len(conversation)}")
+        logger.info(f"Payload conversation length: {len(conversation_for_microservice)} (including system prompt)")
+        logger.info(f"Sending payload to microservice: user_input='{chat_in.prompt}', conversation_length={len(conversation_for_microservice)}")
         
         # Debug: Log the conversation structure (last few messages)
-        if len(conversation) > 3:
+        if len(conversation_for_microservice) > 3:
             logger.info("Last 3 conversation messages being sent:")
-            for i, msg in enumerate(conversation[-3:]):
+            for i, msg in enumerate(conversation_for_microservice[-3:]):
                 logger.info(f"  [{i}] {msg['role']}: {msg['content'][:100]}...")
         else:
             logger.info("Full conversation being sent:")
-            for i, msg in enumerate(conversation):
+            for i, msg in enumerate(conversation_for_microservice):
                 logger.info(f"  [{i}] {msg['role']}: {msg['content'][:100]}...")
         
         db_chat = Chat(
@@ -375,7 +373,47 @@ async def create_chat(
         db.add(db_chat)
         db.commit() # Commit chat entry so stream_response can find it
 
-        logger.info(f"Starting streaming response for chat {chat_id} with {len(conversation)-2} previous messages")
+        logger.info(f"Starting streaming response for chat {chat_id} with {len(conversation_for_microservice)-2} previous messages")
+        
+        # Detailed logging of what's being sent to LLM layer
+        logger.info("=== DETAILED PAYLOAD TO LLM LAYER ===")
+        logger.info(f"Payload keys: {list(prompt_payload.keys())}")
+        
+        # Log conversation structure
+        if 'conversation' in prompt_payload:
+            logger.info(f"CONVERSATION array length: {len(prompt_payload['conversation'])}")
+            for i, msg in enumerate(prompt_payload['conversation']):
+                role = msg.get('role', 'unknown')
+                content = msg.get('content', '')[:150] + "..." if len(msg.get('content', '')) > 150 else msg.get('content', '')
+                logger.info(f"  conversation[{i}] - {role}: {content}")
+        
+        # Log formatted chats
+        if formatted_chats:
+            logger.info(f"FORMATTED_CHATS length: {len(formatted_chats)}")
+            for i, msg in enumerate(formatted_chats):
+                role = msg.get('role', 'unknown')
+                content = msg.get('content', '')[:100] + "..." if len(msg.get('content', '')) > 100 else msg.get('content', '')
+                logger.info(f"  formatted_chats[{i}] - {role}: {content}")
+        
+        # Log alternative parameters
+        if 'user_input_with_context' in prompt_payload:
+            context_content = prompt_payload['user_input_with_context'][:200] + "..." if len(prompt_payload['user_input_with_context']) > 200 else prompt_payload['user_input_with_context']
+            logger.info(f"USER_INPUT_WITH_CONTEXT: {context_content}")
+        
+        if 'conversation_history' in prompt_payload:
+            logger.info(f"CONVERSATION_HISTORY length: {len(prompt_payload['conversation_history'])}")
+        
+        if 'messages' in prompt_payload:
+            logger.info(f"MESSAGES array length: {len(prompt_payload['messages'])}")
+        
+        if 'current_params' in prompt_payload:
+            logger.info(f"CURRENT_PARAMS present: {bool(prompt_payload['current_params'])}")
+            if prompt_payload['current_params']:
+                params_str = str(prompt_payload['current_params'])[:200] + "..." if len(str(prompt_payload['current_params'])) > 200 else str(prompt_payload['current_params'])
+                logger.info(f"CURRENT_PARAMS content: {params_str}")
+        
+        logger.info("=== END PAYLOAD TO LLM LAYER ===")
+        
         return StreamingResponse(
             stream_response_wrapper(settings.MICRO_URL, prompt_payload, db, chat_id),
             media_type="text/event-stream"
@@ -468,24 +506,21 @@ async def continue_chat(
             base_system_content += conversation_summary
             logger.info(f"Added conversation summary to system prompt (queries: {len(recent_user_queries)}, recs: {len(recent_recommendations)})")
     
-    conversation = [
-        {
-            "role": "system",
-            "content": base_system_content
-        }
-    ]
+    # DON'T send system prompt to microservice since it adds its own
+    # Instead, send just the conversation history without system prompt
+    conversation_for_microservice = []
     
     # Add previous conversation history if available
     if formatted_chats:
-        conversation.extend(formatted_chats)
-        logger.info(f"Added {len(formatted_chats)} previous messages to conversation")
+        conversation_for_microservice.extend(formatted_chats)
+        logger.info(f"Added {len(formatted_chats)} previous messages to conversation for microservice")
     
     # Add current user input
-    conversation.append({"role": "user", "content": chat_in.prompt})
+    conversation_for_microservice.append({"role": "user", "content": chat_in.prompt})
 
     prompt_payload = {
         "user_input": chat_in.prompt,
-        "conversation": conversation
+        "conversation": conversation_for_microservice  # No system prompt
     }
     
     # Try alternative approaches to send conversation history
@@ -506,7 +541,7 @@ async def continue_chat(
         # Try embedding context in user_input
         prompt_payload["user_input_with_context"] = context_summary
         prompt_payload["conversation_history"] = formatted_chats  # Alternative parameter name
-        prompt_payload["messages"] = conversation  # Try 'messages' instead of 'conversation'
+        prompt_payload["messages"] = conversation_for_microservice  # Try 'messages' instead of 'conversation'
         
         logger.info(f"Added conversation context to user_input and alternative parameters")
     
@@ -523,17 +558,17 @@ async def continue_chat(
 
     chat_id = str(uuid.uuid4())
     logger.info(f"Creating new chat {chat_id} in session {session_id}")
-    logger.info(f"Payload conversation length: {len(conversation)} (including system prompt)")
-    logger.info(f"Sending payload to microservice: user_input='{chat_in.prompt}', conversation_length={len(conversation)}")
+    logger.info(f"Payload conversation length: {len(conversation_for_microservice)} (including system prompt)")
+    logger.info(f"Sending payload to microservice: user_input='{chat_in.prompt}', conversation_length={len(conversation_for_microservice)}")
     
     # Debug: Log the conversation structure (last few messages)
-    if len(conversation) > 3:
+    if len(conversation_for_microservice) > 3:
         logger.info("Last 3 conversation messages being sent:")
-        for i, msg in enumerate(conversation[-3:]):
+        for i, msg in enumerate(conversation_for_microservice[-3:]):
             logger.info(f"  [{i}] {msg['role']}: {msg['content'][:100]}...")
     else:
         logger.info("Full conversation being sent:")
-        for i, msg in enumerate(conversation):
+        for i, msg in enumerate(conversation_for_microservice):
             logger.info(f"  [{i}] {msg['role']}: {msg['content'][:100]}...")
     
     db_chat = Chat(
@@ -550,6 +585,45 @@ async def continue_chat(
     )
     db.add(db_chat)
     db.commit() # Commit chat entry and session update
+
+    # Detailed logging of what's being sent to LLM layer
+    logger.info("=== DETAILED PAYLOAD TO LLM LAYER (CONTINUE_CHAT) ===")
+    logger.info(f"Payload keys: {list(prompt_payload.keys())}")
+    
+    # Log conversation structure
+    if 'conversation' in prompt_payload:
+        logger.info(f"CONVERSATION array length: {len(prompt_payload['conversation'])}")
+        for i, msg in enumerate(prompt_payload['conversation']):
+            role = msg.get('role', 'unknown')
+            content = msg.get('content', '')[:150] + "..." if len(msg.get('content', '')) > 150 else msg.get('content', '')
+            logger.info(f"  conversation[{i}] - {role}: {content}")
+    
+    # Log formatted chats
+    if formatted_chats:
+        logger.info(f"FORMATTED_CHATS length: {len(formatted_chats)}")
+        for i, msg in enumerate(formatted_chats):
+            role = msg.get('role', 'unknown')
+            content = msg.get('content', '')[:100] + "..." if len(msg.get('content', '')) > 100 else msg.get('content', '')
+            logger.info(f"  formatted_chats[{i}] - {role}: {content}")
+    
+    # Log alternative parameters
+    if 'user_input_with_context' in prompt_payload:
+        context_content = prompt_payload['user_input_with_context'][:200] + "..." if len(prompt_payload['user_input_with_context']) > 200 else prompt_payload['user_input_with_context']
+        logger.info(f"USER_INPUT_WITH_CONTEXT: {context_content}")
+    
+    if 'conversation_history' in prompt_payload:
+        logger.info(f"CONVERSATION_HISTORY length: {len(prompt_payload['conversation_history'])}")
+    
+    if 'messages' in prompt_payload:
+        logger.info(f"MESSAGES array length: {len(prompt_payload['messages'])}")
+    
+    if 'current_params' in prompt_payload:
+        logger.info(f"CURRENT_PARAMS present: {bool(prompt_payload['current_params'])}")
+        if prompt_payload['current_params']:
+            params_str = str(prompt_payload['current_params'])[:200] + "..." if len(str(prompt_payload['current_params'])) > 200 else str(prompt_payload['current_params'])
+            logger.info(f"CURRENT_PARAMS content: {params_str}")
+    
+    logger.info("=== END PAYLOAD TO LLM LAYER (CONTINUE_CHAT) ===")
 
     return StreamingResponse(
         stream_response_wrapper(settings.MICRO_URL, prompt_payload, db, chat_id),
