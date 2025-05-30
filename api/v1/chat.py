@@ -173,6 +173,12 @@ async def stream_response(response: httpx.Response, db: Session, chat_id: str):
 async def stream_response_wrapper(url: str, json_payload: dict, db: Session, chat_id: str):
     # Note: httpx.AsyncClient should ideally be managed globally or per-app for performance
     # rather than created on each request, but for simplicity here it's per-call.
+    logger.info(f"Stream wrapper called for chat {chat_id}")
+    logger.info(f"Payload keys: {list(json_payload.keys())}")
+    logger.info(f"Conversation length in payload: {len(json_payload.get('conversation', []))}")
+    if 'current_params' in json_payload:
+        logger.info(f"Current params present: {bool(json_payload['current_params'])}")
+    
     async with httpx.AsyncClient() as client:
         try:
             async with client.stream(
@@ -185,7 +191,7 @@ async def stream_response_wrapper(url: str, json_payload: dict, db: Session, cha
                 async for chunk_to_forward in stream_response(response, db, chat_id):
                     yield chunk_to_forward
         except httpx.HTTPStatusError as e_http_status:
-            print(f"[ERROR CHAT.PY] stream_response_wrapper - HTTPStatusError: {e_http_status.request.url} - Status {e_http_status.response.status_code}")
+            logger.error(f"HTTPStatusError: {e_http_status.request.url} - Status {e_http_status.response.status_code}")
             await handle_streaming_error(db, chat_id, e_http_status)
             error_content = f'External service error: {e_http_status.response.status_code}'
             try: # Try to get more details from response if JSON
@@ -196,11 +202,11 @@ async def stream_response_wrapper(url: str, json_payload: dict, db: Session, cha
 
             yield f"data: {json.dumps({'type': 'error', 'content': error_content})}\n\n"
         except httpx.RequestError as e_request: # Covers network errors, DNS failures, timeouts before response, etc.
-            print(f"[ERROR CHAT.PY] stream_response_wrapper - RequestError: {e_request.request.url} - {e_request}")
+            logger.error(f"RequestError: {e_request.request.url} - {e_request}")
             await handle_streaming_error(db, chat_id, e_request)
             yield f"data: {json.dumps({'type': 'error', 'content': f'Error connecting to external service: {str(e_request)}'})}\n\n"
         except Exception as e_unexpected:
-            print(f"[ERROR CHAT.PY] stream_response_wrapper - Unexpected error: {e_unexpected}")
+            logger.error(f"Unexpected error: {e_unexpected}")
             await handle_streaming_error(db, chat_id, e_unexpected)
             yield f"data: {json.dumps({'type': 'error', 'content': f'An unexpected error occurred: {str(e_unexpected)}'})}\n\n"
 
@@ -338,44 +344,61 @@ async def continue_chat(
     db_session.updated_at = datetime.utcnow()
     db.add(db_session) # Handled by commit below with chat
 
-    prev_chats = db.query(Chat).filter(Chat.session_id == session_id).order_by(Chat.created_at).all() # Order to maintain conversation
+    # Get previous chats from this session (excluding any incomplete ones)
+    prev_chats = db.query(Chat).filter(
+        Chat.session_id == session_id,
+        Chat.response.isnot(None),
+        Chat.response != ""
+    ).order_by(Chat.created_at).all()
+    
+    logger.info(f"Found {len(prev_chats)} previous chats in session {session_id}")
+    
     formatted_chats = []
     for chat_item in prev_chats:
         formatted_chats.extend([
             {"role": "user", "content": chat_item.prompt},
             {"role": "assistant", "content": chat_item.response or "I am sorry, I don't have a response for that."}
         ])
+    
+    logger.info(f"Formatted {len(formatted_chats)} conversation messages from previous chats")
+
+    # Build conversation with previous history
+    conversation = [
+        {
+            "role": "system",
+            "content": "You are an intelligent phone recommendation assistant by a company called \"Retello\"\nAvailable features and their descriptions:\n{\n  \"battery_capacity\": \"Battery size in mAh\",\n  \"main_camera\": \"Main camera resolution in MP\",\n  \"front_camera\": \"Front camera resolution in MP\",\n  \"screen_size\": \"Screen size in inches\",\n  \"charging_speed\": \"Charging speed in watts\",\n  \"os\": \"Android version\",\n  \"camera_count\": \"Number of cameras\",\n  \"sensors\": \"Available sensors\",\n  \"display_type\": \"Display technology\",\n  \"network\": \"Network connectivity\",\n  \"chipset\": \"processor/chipset name\",\n  \"preferred_brands\": \"names of the brands preferred by a user\",\n  \"price_range\": \"price a user is willing to pay\"\n}\n\nMap user requirements to these specific features if possible. Consider both explicit and implicit needs."
+        }
+    ]
+    
+    # Add previous conversation history if available
+    if formatted_chats:
+        conversation.extend(formatted_chats)
+        logger.info(f"Added {len(formatted_chats)} previous messages to conversation")
+    
+    # Add current user input
+    conversation.append({"role": "user", "content": chat_in.prompt})
 
     prompt_payload = {
-        "user_input": chat_in.prompt
+        "user_input": chat_in.prompt,
+        "conversation": conversation
     }
     
-    if formatted_chats:
-        last_chat = prev_chats[-1] if prev_chats else None
-        prompt_payload.update({
-            "current_params": last_chat.current_params if last_chat and last_chat.current_params else None, # Ensure current_params is not None if last_chat exists but has no params
-            "conversation": [
-                {
-                    "role": "system",
-                    "content": "You are an intelligent phone recommendation assistant by a company called \"Retello\"\nAvailable features and their descriptions:\n{\n  \"battery_capacity\": \"Battery size in mAh\",\n  \"main_camera\": \"Main camera resolution in MP\",\n  \"front_camera\": \"Front camera resolution in MP\",\n  \"screen_size\": \"Screen size in inches\",\n  \"charging_speed\": \"Charging speed in watts\",\n  \"os\": \"Android version\",\n  \"camera_count\": \"Number of cameras\",\n  \"sensors\": \"Available sensors\",\n  \"display_type\": \"Display technology\",\n  \"network\": \"Network connectivity\",\n  \"chipset\": \"processor/chipset name\",\n  \"preferred_brands\": \"names of the brands preferred by a user\",\n  \"price_range\": \"price a user is willing to pay\"\n}\n\nMap user requirements to these specific features if possible. Consider both explicit and implicit needs."
-                },
-                *formatted_chats,
-                {"role": "user", "content": chat_in.prompt}
-            ]
-        })
-    else: # If no previous chats, it's like a new chat but in an existing session
-        prompt_payload.update({
-            "conversation": [
-                {
-                    "role": "system",
-                    "content": "You are an intelligent phone recommendation assistant by a company called \"Retello\"\nAvailable features and their descriptions:\n{\n  \"battery_capacity\": \"Battery size in mAh\",\n  \"main_camera\": \"Main camera resolution in MP\",\n  \"front_camera\": \"Front camera resolution in MP\",\n  \"screen_size\": \"Screen size in inches\",\n  \"charging_speed\": \"Charging speed in watts\",\n  \"os\": \"Android version\",\n  \"camera_count\": \"Number of cameras\",\n  \"sensors\": \"Available sensors\",\n  \"display_type\": \"Display technology\",\n  \"network\": \"Network connectivity\",\n  \"chipset\": \"processor/chipset name\",\n  \"preferred_brands\": \"names of the brands preferred by a user\",\n  \"price_range\": \"price a user is willing to pay\"\n}\n\nMap user requirements to these specific features if possible. Consider both explicit and implicit needs."
-                },
-                {"role": "user", "content": chat_in.prompt}
-            ]
-        })
+    # Include current_params from last chat if available
+    if prev_chats:
+        last_chat = prev_chats[-1]
+        if last_chat.current_params:
+            prompt_payload["current_params"] = last_chat.current_params
+            logger.info(f"Including current_params from last chat: {last_chat.current_params}")
+        else:
+            logger.info("No current_params found in last chat")
+    else:
+        logger.info("No previous chats found for current_params")
 
     chat_id = str(uuid.uuid4())
     logger.info(f"Creating new chat {chat_id} in session {session_id}")
+    logger.info(f"Payload conversation length: {len(conversation)} (including system prompt)")
+    logger.info(f"Sending payload to microservice: user_input='{chat_in.prompt}', conversation_length={len(conversation)}")
+    
     db_chat = Chat(
         id=chat_id,
         user_id=current_user.id,
