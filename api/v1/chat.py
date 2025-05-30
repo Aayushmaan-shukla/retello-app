@@ -316,6 +316,28 @@ async def create_chat(
             "conversation": conversation
         }
         
+        # Try alternative approaches to send conversation history
+        # Approach 1: Embed conversation in user_input itself
+        if formatted_chats and len(formatted_chats) > 0:
+            # Create conversation context as part of user input
+            context_summary = "\n\n[CONVERSATION CONTEXT]:\n"
+            for i in range(max(0, len(formatted_chats)-4), len(formatted_chats), 2):
+                if i < len(formatted_chats):
+                    user_msg = formatted_chats[i].get('content', '')[:100]
+                    context_summary += f"Previous User: {user_msg}\n"
+                if i + 1 < len(formatted_chats):
+                    assistant_msg = formatted_chats[i + 1].get('content', '')[:100]
+                    context_summary += f"Previous Assistant: {assistant_msg}\n"
+            
+            context_summary += f"\n[CURRENT QUESTION]: {chat_in.prompt}"
+            
+            # Try embedding context in user_input
+            prompt_payload["user_input_with_context"] = context_summary
+            prompt_payload["conversation_history"] = formatted_chats  # Alternative parameter name
+            prompt_payload["messages"] = conversation  # Try 'messages' instead of 'conversation'
+            
+            logger.info(f"Added conversation context to user_input and alternative parameters")
+        
         # Include current_params from last chat if available
         if recent_db_session:
             last_chat = db.query(Chat).filter(Chat.session_id == session_id).order_by(Chat.created_at.desc()).first()
@@ -465,6 +487,28 @@ async def continue_chat(
         "user_input": chat_in.prompt,
         "conversation": conversation
     }
+    
+    # Try alternative approaches to send conversation history
+    # Approach 1: Embed conversation in user_input itself
+    if formatted_chats and len(formatted_chats) > 0:
+        # Create conversation context as part of user input
+        context_summary = "\n\n[CONVERSATION CONTEXT]:\n"
+        for i in range(max(0, len(formatted_chats)-4), len(formatted_chats), 2):
+            if i < len(formatted_chats):
+                user_msg = formatted_chats[i].get('content', '')[:100]
+                context_summary += f"Previous User: {user_msg}\n"
+            if i + 1 < len(formatted_chats):
+                assistant_msg = formatted_chats[i + 1].get('content', '')[:100]
+                context_summary += f"Previous Assistant: {assistant_msg}\n"
+        
+        context_summary += f"\n[CURRENT QUESTION]: {chat_in.prompt}"
+        
+        # Try embedding context in user_input
+        prompt_payload["user_input_with_context"] = context_summary
+        prompt_payload["conversation_history"] = formatted_chats  # Alternative parameter name
+        prompt_payload["messages"] = conversation  # Try 'messages' instead of 'conversation'
+        
+        logger.info(f"Added conversation context to user_input and alternative parameters")
     
     # Include current_params from last chat if available
     if prev_chats:
