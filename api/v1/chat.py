@@ -293,6 +293,19 @@ async def create_chat(
 
         chat_id = str(uuid.uuid4())
         logger.info(f"Creating new chat {chat_id} in session {session_id}")
+        logger.info(f"Payload conversation length: {len(conversation)} (including system prompt)")
+        logger.info(f"Sending payload to microservice: user_input='{chat_in.prompt}', conversation_length={len(conversation)}")
+        
+        # Debug: Log the conversation structure (last few messages)
+        if len(conversation) > 3:
+            logger.info("Last 3 conversation messages being sent:")
+            for i, msg in enumerate(conversation[-3:]):
+                logger.info(f"  [{i}] {msg['role']}: {msg['content'][:100]}...")
+        else:
+            logger.info("Full conversation being sent:")
+            for i, msg in enumerate(conversation):
+                logger.info(f"  [{i}] {msg['role']}: {msg['content'][:100]}...")
+        
         db_chat = Chat(
             id=chat_id,
             user_id=current_user.id,
@@ -348,19 +361,25 @@ async def continue_chat(
     prev_chats = db.query(Chat).filter(
         Chat.session_id == session_id,
         Chat.response.isnot(None),
-        Chat.response != ""
+        Chat.response != "",
+        Chat.response != "I am sorry, I don't have a response for that."
     ).order_by(Chat.created_at).all()
     
     logger.info(f"Found {len(prev_chats)} previous chats in session {session_id}")
     
     formatted_chats = []
     for chat_item in prev_chats:
-        formatted_chats.extend([
-            {"role": "user", "content": chat_item.prompt},
-            {"role": "assistant", "content": chat_item.response or "I am sorry, I don't have a response for that."}
-        ])
+        # Only include chats with meaningful responses
+        response_content = chat_item.response.strip() if chat_item.response else ""
+        if response_content and len(response_content) > 10:  # Ensure meaningful content
+            formatted_chats.extend([
+                {"role": "user", "content": chat_item.prompt},
+                {"role": "assistant", "content": response_content}
+            ])
+        else:
+            logger.warning(f"Skipping chat with insufficient response: {chat_item.id}")
     
-    logger.info(f"Formatted {len(formatted_chats)} conversation messages from previous chats")
+    logger.info(f"Formatted {len(formatted_chats)} conversation messages from {len(prev_chats)} previous chats")
 
     # Build conversation with previous history
     conversation = [
@@ -398,6 +417,16 @@ async def continue_chat(
     logger.info(f"Creating new chat {chat_id} in session {session_id}")
     logger.info(f"Payload conversation length: {len(conversation)} (including system prompt)")
     logger.info(f"Sending payload to microservice: user_input='{chat_in.prompt}', conversation_length={len(conversation)}")
+    
+    # Debug: Log the conversation structure (last few messages)
+    if len(conversation) > 3:
+        logger.info("Last 3 conversation messages being sent:")
+        for i, msg in enumerate(conversation[-3:]):
+            logger.info(f"  [{i}] {msg['role']}: {msg['content'][:100]}...")
+    else:
+        logger.info("Full conversation being sent:")
+        for i, msg in enumerate(conversation):
+            logger.info(f"  [{i}] {msg['role']}: {msg['content'][:100]}...")
     
     db_chat = Chat(
         id=chat_id,
