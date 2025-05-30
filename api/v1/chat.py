@@ -231,6 +231,18 @@ async def create_chat(
         if recent_db_session:
             session_id = recent_db_session.id
             logger.info(f"Using existing session {session_id} for user {current_user.id}")
+            
+            # Get previous chats from this session for context
+            prev_chats = db.query(Chat).filter(Chat.session_id == session_id).order_by(Chat.created_at).all()
+            formatted_chats = []
+            for chat_item in prev_chats:
+                formatted_chats.extend([
+                    {"role": "user", "content": chat_item.prompt},
+                    {"role": "assistant", "content": chat_item.response or "I am sorry, I don't have a response for that."}
+                ])
+            
+            logger.info(f"Including {len(prev_chats)} previous chats for context in session {session_id}")
+            
         else:
             new_db_session = DBSession(
                 id=str(uuid.uuid4()),
@@ -243,18 +255,35 @@ async def create_chat(
             db.add(new_db_session)
             db.commit() # Commit session first to ensure session_id is valid
             session_id = new_db_session.id
+            formatted_chats = []  # No previous chats for new session
             logger.info(f"Created new session {session_id} for user {current_user.id}")
+
+        # Build conversation with history if available
+        conversation = [
+            {
+                "role": "system",
+                "content": "You are an intelligent phone recommendation assistant by a company called \"Retello\"\nAvailable features and their descriptions:\n{\n  \"battery_capacity\": \"Battery size in mAh\",\n  \"main_camera\": \"Main camera resolution in MP\",\n  \"front_camera\": \"Front camera resolution in MP\",\n  \"screen_size\": \"Screen size in inches\",\n  \"charging_speed\": \"Charging speed in watts\",\n  \"os\": \"Android version\",\n  \"camera_count\": \"Number of cameras\",\n  \"sensors\": \"Available sensors\",\n  \"display_type\": \"Display technology\",\n  \"network\": \"Network connectivity\",\n  \"chipset\": \"processor/chipset name\",\n  \"preferred_brands\": \"names of the brands preferred by a user\",\n  \"price_range\": \"price a user is willing to pay\"\n}\n\nMap user requirements to these specific features if possible. Consider both explicit and implicit needs."
+            }
+        ]
+        
+        # Add previous conversation history if available
+        if formatted_chats:
+            conversation.extend(formatted_chats)
+        
+        # Add current user input
+        conversation.append({"role": "user", "content": chat_in.prompt})
 
         prompt_payload = {
             "user_input": chat_in.prompt,
-            "conversation": [
-                {
-                    "role": "system",
-                    "content": "You are an intelligent phone recommendation assistant by a company called \"Retello\"\nAvailable features and their descriptions:\n{\n  \"battery_capacity\": \"Battery size in mAh\",\n  \"main_camera\": \"Main camera resolution in MP\",\n  \"front_camera\": \"Front camera resolution in MP\",\n  \"screen_size\": \"Screen size in inches\",\n  \"charging_speed\": \"Charging speed in watts\",\n  \"os\": \"Android version\",\n  \"camera_count\": \"Number of cameras\",\n  \"sensors\": \"Available sensors\",\n  \"display_type\": \"Display technology\",\n  \"network\": \"Network connectivity\",\n  \"chipset\": \"processor/chipset name\",\n  \"preferred_brands\": \"names of the brands preferred by a user\",\n  \"price_range\": \"price a user is willing to pay\"\n}\n\nMap user requirements to these specific features if possible. Consider both explicit and implicit needs."
-                },
-                {"role": "user", "content": chat_in.prompt}
-            ]
+            "conversation": conversation
         }
+        
+        # Include current_params from last chat if available
+        if recent_db_session:
+            last_chat = db.query(Chat).filter(Chat.session_id == session_id).order_by(Chat.created_at.desc()).first()
+            if last_chat and last_chat.current_params:
+                prompt_payload["current_params"] = last_chat.current_params
+                logger.info(f"Including current_params from last chat in session {session_id}")
 
         chat_id = str(uuid.uuid4())
         logger.info(f"Creating new chat {chat_id} in session {session_id}")
@@ -273,7 +302,7 @@ async def create_chat(
         db.add(db_chat)
         db.commit() # Commit chat entry so stream_response can find it
 
-        logger.info(f"Starting streaming response for chat {chat_id}")
+        logger.info(f"Starting streaming response for chat {chat_id} with {len(conversation)-2} previous messages")
         return StreamingResponse(
             stream_response_wrapper(settings.MICRO_URL, prompt_payload, db, chat_id),
             media_type="text/event-stream"
