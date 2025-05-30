@@ -264,11 +264,43 @@ async def create_chat(
             formatted_chats = []  # No previous chats for new session
             logger.info(f"Created new session {session_id} for user {current_user.id}")
 
-        # Build conversation with history if available
+        # Build conversation with previous history
+        base_system_content = "You are an intelligent phone recommendation assistant by a company called \"Retello\"\nAvailable features and their descriptions:\n{\n  \"battery_capacity\": \"Battery size in mAh\",\n  \"main_camera\": \"Main camera resolution in MP\",\n  \"front_camera\": \"Front camera resolution in MP\",\n  \"screen_size\": \"Screen size in inches\",\n  \"charging_speed\": \"Charging speed in watts\",\n  \"os\": \"Android version\",\n  \"camera_count\": \"Number of cameras\",\n  \"sensors\": \"Available sensors\",\n  \"display_type\": \"Display technology\",\n  \"network\": \"Network connectivity\",\n  \"chipset\": \"processor/chipset name\",\n  \"preferred_brands\": \"names of the brands preferred by a user\",\n  \"price_range\": \"price a user is willing to pay\"\n}\n\nMap user requirements to these specific features if possible. Consider both explicit and implicit needs."
+        
+        # Add conversation summary if there are previous chats
+        if formatted_chats and len(formatted_chats) > 0:
+            # Create a summary of recent interactions
+            recent_user_queries = []
+            recent_recommendations = []
+            
+            # Extract last few user queries and phone recommendations
+            for i in range(0, min(len(formatted_chats), 6), 2):  # Last 3 interactions
+                if i < len(formatted_chats):
+                    user_msg = formatted_chats[i].get('content', '')
+                    if len(user_msg) > 10:
+                        recent_user_queries.append(user_msg[:100])
+                
+                if i + 1 < len(formatted_chats):
+                    assistant_msg = formatted_chats[i + 1].get('content', '')
+                    # Extract phone names from assistant response
+                    if 'phone' in assistant_msg.lower() and len(assistant_msg) > 20:
+                        recent_recommendations.append(assistant_msg[:150])
+            
+            if recent_user_queries or recent_recommendations:
+                conversation_summary = "\n\nCONVERSATION CONTEXT:"
+                if recent_user_queries:
+                    conversation_summary += f"\nRecent user requests: {'; '.join(recent_user_queries[-2:])}"
+                if recent_recommendations:
+                    conversation_summary += f"\nRecent recommendations provided: {'; '.join(recent_recommendations[-2:])}"
+                conversation_summary += "\nUse this context to maintain continuity in your responses."
+                
+                base_system_content += conversation_summary
+                logger.info(f"Added conversation summary to system prompt (queries: {len(recent_user_queries)}, recs: {len(recent_recommendations)})")
+        
         conversation = [
             {
                 "role": "system",
-                "content": "You are an intelligent phone recommendation assistant by a company called \"Retello\"\nAvailable features and their descriptions:\n{\n  \"battery_capacity\": \"Battery size in mAh\",\n  \"main_camera\": \"Main camera resolution in MP\",\n  \"front_camera\": \"Front camera resolution in MP\",\n  \"screen_size\": \"Screen size in inches\",\n  \"charging_speed\": \"Charging speed in watts\",\n  \"os\": \"Android version\",\n  \"camera_count\": \"Number of cameras\",\n  \"sensors\": \"Available sensors\",\n  \"display_type\": \"Display technology\",\n  \"network\": \"Network connectivity\",\n  \"chipset\": \"processor/chipset name\",\n  \"preferred_brands\": \"names of the brands preferred by a user\",\n  \"price_range\": \"price a user is willing to pay\"\n}\n\nMap user requirements to these specific features if possible. Consider both explicit and implicit needs."
+                "content": base_system_content
             }
         ]
         
@@ -382,10 +414,42 @@ async def continue_chat(
     logger.info(f"Formatted {len(formatted_chats)} conversation messages from {len(prev_chats)} previous chats")
 
     # Build conversation with previous history
+    base_system_content = "You are an intelligent phone recommendation assistant by a company called \"Retello\"\nAvailable features and their descriptions:\n{\n  \"battery_capacity\": \"Battery size in mAh\",\n  \"main_camera\": \"Main camera resolution in MP\",\n  \"front_camera\": \"Front camera resolution in MP\",\n  \"screen_size\": \"Screen size in inches\",\n  \"charging_speed\": \"Charging speed in watts\",\n  \"os\": \"Android version\",\n  \"camera_count\": \"Number of cameras\",\n  \"sensors\": \"Available sensors\",\n  \"display_type\": \"Display technology\",\n  \"network\": \"Network connectivity\",\n  \"chipset\": \"processor/chipset name\",\n  \"preferred_brands\": \"names of the brands preferred by a user\",\n  \"price_range\": \"price a user is willing to pay\"\n}\n\nMap user requirements to these specific features if possible. Consider both explicit and implicit needs."
+    
+    # Add conversation summary if there are previous chats
+    if formatted_chats and len(formatted_chats) > 0:
+        # Create a summary of recent interactions
+        recent_user_queries = []
+        recent_recommendations = []
+        
+        # Extract last few user queries and phone recommendations
+        for i in range(0, min(len(formatted_chats), 6), 2):  # Last 3 interactions
+            if i < len(formatted_chats):
+                user_msg = formatted_chats[i].get('content', '')
+                if len(user_msg) > 10:
+                    recent_user_queries.append(user_msg[:100])
+            
+            if i + 1 < len(formatted_chats):
+                assistant_msg = formatted_chats[i + 1].get('content', '')
+                # Extract phone names from assistant response
+                if 'phone' in assistant_msg.lower() and len(assistant_msg) > 20:
+                    recent_recommendations.append(assistant_msg[:150])
+        
+        if recent_user_queries or recent_recommendations:
+            conversation_summary = "\n\nCONVERSATION CONTEXT:"
+            if recent_user_queries:
+                conversation_summary += f"\nRecent user requests: {'; '.join(recent_user_queries[-2:])}"
+            if recent_recommendations:
+                conversation_summary += f"\nRecent recommendations provided: {'; '.join(recent_recommendations[-2:])}"
+            conversation_summary += "\nUse this context to maintain continuity in your responses."
+            
+            base_system_content += conversation_summary
+            logger.info(f"Added conversation summary to system prompt (queries: {len(recent_user_queries)}, recs: {len(recent_recommendations)})")
+    
     conversation = [
         {
             "role": "system",
-            "content": "You are an intelligent phone recommendation assistant by a company called \"Retello\"\nAvailable features and their descriptions:\n{\n  \"battery_capacity\": \"Battery size in mAh\",\n  \"main_camera\": \"Main camera resolution in MP\",\n  \"front_camera\": \"Front camera resolution in MP\",\n  \"screen_size\": \"Screen size in inches\",\n  \"charging_speed\": \"Charging speed in watts\",\n  \"os\": \"Android version\",\n  \"camera_count\": \"Number of cameras\",\n  \"sensors\": \"Available sensors\",\n  \"display_type\": \"Display technology\",\n  \"network\": \"Network connectivity\",\n  \"chipset\": \"processor/chipset name\",\n  \"preferred_brands\": \"names of the brands preferred by a user\",\n  \"price_range\": \"price a user is willing to pay\"\n}\n\nMap user requirements to these specific features if possible. Consider both explicit and implicit needs."
+            "content": base_system_content
         }
     ]
     
