@@ -13,6 +13,7 @@ class Chat(Base):
     phones = Column(JSON, default=list)
     current_params = Column(JSON)
     button_text = Column(String, nullable=True)
+    why_this_phone = Column(JSON, default=list)
     
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     created_at = Column(DateTime, default=func.now())

@@ -65,6 +65,21 @@ def migrate_db():
                 ADD COLUMN IF NOT EXISTS button_text VARCHAR;
             """))
 
+        # Check if the why_this_phone column exists in chats table
+        result = connection.execute(text("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name='chats' AND column_name='why_this_phone';
+        """))
+        why_this_phone_exists = result.fetchone() is not None
+
+        if not why_this_phone_exists:
+            # Add why_this_phone column if it doesn't exist
+            connection.execute(text("""
+                ALTER TABLE chats 
+                ADD COLUMN IF NOT EXISTS why_this_phone JSON DEFAULT '[]';
+            """))
+
         connection.commit()
 
 if __name__ == "__main__":
