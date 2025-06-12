@@ -26,6 +26,8 @@ class Settings(BaseSettings):
 
     JWT_SECRET: str = os.getenv("JWT_SECRET", "your-secret-key")
     JWT_ALGORITHM: str = "HS256"
+    
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
 
     MICRO_URL: str = os.getenv("MICRO_URL", "https://api-microretello.enpointe.io/ask")
 
