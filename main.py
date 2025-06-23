@@ -15,14 +15,22 @@ app = FastAPI(
     openapi_url=f"{settings.API_V1_STR}/openapi.json"
 )
 
-# [MODIFIED] Updated on 2024-03-21: Enhanced CORS settings for streaming support
+# [MODIFIED] Updated on 2024-03-21: Enhanced CORS settings for streaming support and pagination
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.BACKEND_CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Content-Type", "Content-Length", "Transfer-Encoding"]  # Added for streaming support
+    expose_headers=[
+        "Content-Type", 
+        "Content-Length", 
+        "Transfer-Encoding",  # For streaming support
+        "X-Total-Count",      # For pagination metadata
+        "X-Page-Size",        # For pagination metadata
+        "X-Page-Offset",      # For pagination metadata
+        "X-Has-More"          # For pagination metadata
+    ]
 )
 
 logger.info("Application startup: Initializing routes")

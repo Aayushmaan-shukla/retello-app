@@ -1,5 +1,5 @@
 from typing import Any, List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.orm import Session
 import uuid
 from datetime import datetime
@@ -62,26 +62,55 @@ async def update_session(
 
 @router.get("", response_model=List[SessionSchema])
 async def get_sessions(
+    response: Response,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    limit: Optional[int] = Query(12, ge=1, le=50, description="Number of sessions to return"),
+    offset: Optional[int] = Query(0, ge=0, description="Number of sessions to skip"),
+    load_chat_previews: Optional[bool] = Query(True, description="Whether to load chat previews")
 ) -> Any:
     """
-    Get all sessions for the current user with limited chat preview for performance.
-    Returns only the first 3 chats per session for session list display.
+    Get sessions for the current user with pagination support.
+    
+    - limit: Number of sessions to return (default: 12, max: 50)
+    - offset: Number of sessions to skip for pagination (default: 0)
+    - load_chat_previews: Whether to include chat previews (default: True)
+    
+    Returns sessions ordered by most recently updated first.
+    Response headers include pagination metadata.
     """
-    # Get sessions without automatic chat loading
-    sessions = db.query(Session).filter(
+    # Get total count for pagination metadata
+    total_sessions = db.query(Session).filter(
         Session.user_id == current_user.id
-    ).order_by(Session.updated_at.desc()).all()
+    ).count()
     
-    # For each session, load only a preview of chats
-    for session in sessions:
-        preview_chats = db.query(Chat).filter(
-            Chat.session_id == session.id
-        ).order_by(Chat.created_at.desc()).limit(3).all()
-        session.chats = preview_chats
+    # Get sessions with pagination
+    sessions_query = db.query(Session).filter(
+        Session.user_id == current_user.id
+    ).order_by(Session.updated_at.desc())
     
-    logger.info(f"Loaded {len(sessions)} sessions with chat previews for user {current_user.id}")
+    # Apply pagination
+    sessions = sessions_query.offset(offset).limit(limit).all()
+    
+    # Load chat previews if requested
+    if load_chat_previews:
+        for session in sessions:
+            preview_chats = db.query(Chat).filter(
+                Chat.session_id == session.id
+            ).order_by(Chat.created_at.desc()).limit(3).all()
+            session.chats = preview_chats
+    else:
+        # Set empty chats list if not loading previews
+        for session in sessions:
+            session.chats = []
+    
+    # Add pagination headers
+    response.headers["X-Total-Count"] = str(total_sessions)
+    response.headers["X-Page-Size"] = str(limit)
+    response.headers["X-Page-Offset"] = str(offset)
+    response.headers["X-Has-More"] = str(offset + limit < total_sessions)
+    
+    logger.info(f"Loaded {len(sessions)} sessions (offset: {offset}, limit: {limit}, total: {total_sessions}) with chat previews for user {current_user.id}")
     return sessions
 
 @router.get("/{session_id}", response_model=SessionSchema)
@@ -173,24 +202,76 @@ async def delete_session(
 
 @router.get("/user/sessions", response_model=List[SessionSchema])
 async def get_user_sessions(
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    limit: Optional[int] = Query(12, ge=1, le=50, description="Number of sessions to return"),
+    offset: Optional[int] = Query(0, ge=0, description="Number of sessions to skip"),
+    load_chat_previews: Optional[bool] = Query(True, description="Whether to load chat previews")
+) -> Any:
+    """
+    Get sessions created by the current user with pagination support.
+    
+    - limit: Number of sessions to return (default: 12, max: 50)  
+    - offset: Number of sessions to skip for pagination (default: 0)
+    - load_chat_previews: Whether to include chat previews (default: True)
+    
+    Returns sessions ordered by most recently updated first.
+    Response headers include pagination metadata.
+    """
+    # Get total count for pagination metadata
+    total_sessions = db.query(Session).filter(
+        Session.user_id == current_user.id
+    ).count()
+    
+    # Get sessions with pagination
+    sessions_query = db.query(Session).filter(
+        Session.user_id == current_user.id
+    ).order_by(Session.updated_at.desc())
+    
+    # Apply pagination
+    sessions = sessions_query.offset(offset).limit(limit).all()
+    
+    # Load chat previews if requested
+    if load_chat_previews:
+        for session in sessions:
+            preview_chats = db.query(Chat).filter(
+                Chat.session_id == session.id
+            ).order_by(Chat.created_at.desc()).limit(3).all()
+            session.chats = preview_chats
+    else:
+        # Set empty chats list if not loading previews
+        for session in sessions:
+            session.chats = []
+    
+    # Add pagination headers
+    response.headers["X-Total-Count"] = str(total_sessions)
+    response.headers["X-Page-Size"] = str(limit)
+    response.headers["X-Page-Offset"] = str(offset)
+    response.headers["X-Has-More"] = str(offset + limit < total_sessions)
+    
+    logger.info(f"Loaded {len(sessions)} user sessions (offset: {offset}, limit: {limit}, total: {total_sessions}) with chat previews for user {current_user.id}")
+    return sessions
+
+@router.get("/metadata")
+async def get_session_metadata(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ) -> Any:
     """
-    Get all sessions created by the current user, ordered by most recent first.
-    Returns only the first 3 chats per session for performance.
+    Get session metadata for the current user.
+    Useful for pagination and UI state management.
     """
-    # Get sessions without automatic chat loading
-    sessions = db.query(Session).filter(
+    total_sessions = db.query(Session).filter(
         Session.user_id == current_user.id
-    ).order_by(Session.updated_at.desc()).all()
+    ).count()
     
-    # For each session, load only a preview of chats
-    for session in sessions:
-        preview_chats = db.query(Chat).filter(
-            Chat.session_id == session.id
-        ).order_by(Chat.created_at.desc()).limit(3).all()
-        session.chats = preview_chats
+    latest_session = db.query(Session).filter(
+        Session.user_id == current_user.id
+    ).order_by(Session.updated_at.desc()).first()
     
-    logger.info(f"Loaded {len(sessions)} user sessions with chat previews for user {current_user.id}")
-    return sessions 
+    return {
+        "total_sessions": total_sessions,
+        "latest_session_id": latest_session.id if latest_session else None,
+        "latest_updated_at": latest_session.updated_at if latest_session else None
+    } 
