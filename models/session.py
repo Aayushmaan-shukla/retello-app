@@ -13,6 +13,6 @@ class Session(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     created_at = Column(DateTime, default=func.now())
 
-    # Relationships
+    # Relationships - using lazy loading to prevent automatic chat loading
     user = relationship("User", back_populates="sessions")
-    chats = relationship("Chat", back_populates="session") 
+    chats = relationship("Chat", back_populates="session", lazy="select") 
