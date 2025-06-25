@@ -454,6 +454,92 @@ async def create_chat(
         logger.error(f"Error creating chat: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error creating chat: {str(e)}")
 
+@router.post("/why-this-phone", response_model=WhyThisPhoneResponse)
+async def why_this_phone(
+    request: WhyThisPhoneRequest,
+    current_user: User = Depends(get_current_user)
+) -> WhyThisPhoneResponse:
+    """
+    Generate explanation for why a specific phone matches user's needs
+    based on their chat history and phone specifications.
+    
+    Calls external microservice following the same pattern as /ask endpoint.
+    """
+    try:
+        # Validate inputs
+        if not request.chat_history:
+            raise HTTPException(status_code=400, detail="Chat history cannot be empty")
+        
+        if not request.phone.name:
+            raise HTTPException(status_code=400, detail="Phone name is required")
+        
+        # Convert chat history to the format expected by microservice
+        conversation = []
+        for message in request.chat_history:
+            conversation.append({
+                "role": message.role,
+                "content": message.content
+            })
+        
+        # Prepare payload for external microservice
+        payload = {
+            "chat_history": conversation,
+            "phone": request.phone.dict(),
+            "request_type": "why_this_phone",
+            "user_id": current_user.id
+        }
+        
+        logger.info(f"Calling why-this-phone microservice for phone: {request.phone.name}, user: {current_user.id}")
+        
+        # Call external microservice (same pattern as /ask endpoint)
+        microservice_url = settings.WHY_THIS_PHONE_URL
+        
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(
+                    microservice_url,
+                    json=payload,
+                    timeout=30.0  # Non-streaming, so shorter timeout
+                )
+                response.raise_for_status()
+                
+                result = response.json()
+                
+                # Extract the explanation from microservice response
+                explanation = result.get("why_this_phone", "")
+                
+                if not explanation:
+                    raise HTTPException(status_code=500, detail="Empty response from microservice")
+                
+                logger.info(f"Successfully generated why-this-phone explanation for {request.phone.name}")
+                return WhyThisPhoneResponse(why_this_phone=explanation)
+                
+            except httpx.HTTPStatusError as e:
+                logger.error(f"Microservice HTTP error: {e.response.status_code} - {e.response.text}")
+                raise HTTPException(
+                    status_code=502, 
+                    detail=f"External service error: {e.response.status_code}"
+                )
+            except httpx.RequestError as e:
+                logger.error(f"Microservice request error: {str(e)}")
+                raise HTTPException(
+                    status_code=503, 
+                    detail="Unable to connect to phone explanation service"
+                )
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON response from microservice: {str(e)}")
+                raise HTTPException(
+                    status_code=502, 
+                    detail="Invalid response format from external service"
+                )
+                
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in why-this-phone endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
 @router.post("/{session_id}", response_model=None) # response_model=ChatSchema is misleading for StreamingResponse
 async def continue_chat(
     *,
@@ -710,88 +796,4 @@ async def get_session_chat_history(
         logger.error(f"Error fetching session chat history: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error fetching session chat history: {str(e)}")
 
-@router.post("/why-this-phone", response_model=WhyThisPhoneResponse)
-async def why_this_phone(
-    request: WhyThisPhoneRequest,
-    current_user: User = Depends(get_current_user)
-) -> WhyThisPhoneResponse:
-    """
-    Generate explanation for why a specific phone matches user's needs
-    based on their chat history and phone specifications.
-    
-    Calls external microservice following the same pattern as /ask endpoint.
-    """
-    try:
-        # Validate inputs
-        if not request.chat_history:
-            raise HTTPException(status_code=400, detail="Chat history cannot be empty")
-        
-        if not request.phone.name:
-            raise HTTPException(status_code=400, detail="Phone name is required")
-        
-        # Convert chat history to the format expected by microservice
-        conversation = []
-        for message in request.chat_history:
-            conversation.append({
-                "role": message.role,
-                "content": message.content
-            })
-        
-        # Prepare payload for external microservice
-        payload = {
-            "chat_history": conversation,
-            "phone": request.phone.dict(),
-            "request_type": "why_this_phone",
-            "user_id": current_user.id
-        }
-        
-        logger.info(f"Calling why-this-phone microservice for phone: {request.phone.name}, user: {current_user.id}")
-        
-        # Call external microservice (same pattern as /ask endpoint)
-        microservice_url = settings.WHY_THIS_PHONE_URL
-        
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.post(
-                    microservice_url,
-                    json=payload,
-                    timeout=30.0  # Non-streaming, so shorter timeout
-                )
-                response.raise_for_status()
-                
-                result = response.json()
-                
-                # Extract the explanation from microservice response
-                explanation = result.get("why_this_phone", "")
-                
-                if not explanation:
-                    raise HTTPException(status_code=500, detail="Empty response from microservice")
-                
-                logger.info(f"Successfully generated why-this-phone explanation for {request.phone.name}")
-                return WhyThisPhoneResponse(why_this_phone=explanation)
-                
-            except httpx.HTTPStatusError as e:
-                logger.error(f"Microservice HTTP error: {e.response.status_code} - {e.response.text}")
-                raise HTTPException(
-                    status_code=502, 
-                    detail=f"External service error: {e.response.status_code}"
-                )
-            except httpx.RequestError as e:
-                logger.error(f"Microservice request error: {str(e)}")
-                raise HTTPException(
-                    status_code=503, 
-                    detail="Unable to connect to phone explanation service"
-                )
-            except json.JSONDecodeError as e:
-                logger.error(f"Invalid JSON response from microservice: {str(e)}")
-                raise HTTPException(
-                    status_code=502, 
-                    detail="Invalid response format from external service"
-                )
-                
-    except HTTPException:
-        # Re-raise HTTP exceptions
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error in why-this-phone endpoint: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
