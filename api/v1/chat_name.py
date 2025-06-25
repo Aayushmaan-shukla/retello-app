@@ -2,6 +2,7 @@ from typing import List, Dict
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 import json
+import google.generativeai as genai
 from openai import OpenAI
 from app.core.config import settings
 from app.db.base import get_db
@@ -28,11 +29,10 @@ class SessionNameRequest(BaseModel):
 
 def generate_chat_name(chat_history: List[Dict[str, str]]) -> str:
     """
-    Generate a concise name for a chat conversation using OpenAI API.
-    This is the exact same implementation as retello/ui/app.py
+    Generate a concise name for a chat conversation using Google Gemini API.
     """
-    # Use OpenAI API (same as retello/ui/app.py)
-    client = OpenAI(api_key=settings.OPENAI_API_KEY)
+    # Configure the Gemini API
+    genai.configure(api_key=settings.GEMINI_API_KEY)
     
     if not isinstance(chat_history, list):
         raise ValueError("chat_history must be a list")
@@ -42,64 +42,46 @@ def generate_chat_name(chat_history: List[Dict[str, str]]) -> str:
         if not isinstance(message, dict):
             continue
         if message.get('role') in ['user', 'assistant'] and message.get('content'):
-            filtered_messages.append({
-                message['role']: message['content']
-            })
+            role = "user" if message['role'] == 'user' else "assistant"
+            filtered_messages.append(f"{role}: {message['content']}")
 
     if not filtered_messages:
         return "Empty Chat History"
 
-    function_schema = {
-        "name": "chat_name",
-        "description": "Generate a concise, neutral summary name for the chat conversation that helps users identify and refer back to this chat",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "chat_name": {
-                    "type": "string",
-                    "description": "A concise summary name (typically 4-6 words) that captures the main topic or theme of the conversation"
-                }
-            },
-            "required": ["chat_name"]
-        }
-    }
+    # Create the conversation context
+    conversation_text = "\n".join(filtered_messages)
+    
+    # Create the prompt for Gemini
+    prompt = f"""
+You are tasked with creating a concise, neutral name for a chat conversation. 
+The name should be 4-6 words that capture the main topic or theme, helping users easily identify and reference this chat later. 
+Focus on the primary subject matter discussed.
 
-    system_prompt = [{
-        "role": "system",
-        "content": "You are tasked with creating a concise, neutral name for a chat conversation. The name should be 4-6 words that capture the main topic or theme, helping users easily identify and reference this chat later. Focus on the primary subject matter discussed."
-    },
-    {
-        "role": "user",
-        "content": f"{filtered_messages}"
-    }]
+Conversation:
+{conversation_text}
+
+Generate a concise summary name (typically 4-6 words) that captures the main topic or theme of the conversation.
+Respond with ONLY the chat name, no additional text or explanation.
+"""
     
     try:
-        response = client.chat.completions.create(
-            model="gpt-4-turbo-preview",
-            messages=system_prompt,
-            functions=[function_schema],
-            function_call={"name": "chat_name"}
-        )
-
-        message = response.choices[0].message
+        # Initialize the model
+        model = genai.GenerativeModel('gemini-1.5-flash')
         
-        if hasattr(message, 'function_call') and message.function_call:
-            function_call = message.function_call
-            if function_call.name == "chat_name":
-                try:
-                    function_args = json.loads(function_call.arguments)
-                    chat_name = function_args.get('chat_name', '').strip()
-                    if chat_name:
-                        return chat_name
-                except json.JSONDecodeError:
-                    pass
-        if hasattr(message, 'content') and message.content:
-            return message.content.strip()
+        # Generate the response
+        response = model.generate_content(prompt)
+        
+        if response.text:
+            chat_name = response.text.strip()
+            # Remove any quotes or extra formatting
+            chat_name = chat_name.strip('"\'')
+            if chat_name:
+                return chat_name
         
         return "Untitled Chat"
         
     except Exception as e:
-        raise Exception(f"OpenAI API call failed: {str(e)}")
+        raise Exception(f"Gemini API call failed: {str(e)}")
 
 @router.post("/generate", response_model=ChatNameResponse)
 async def generate_chat_name_endpoint(
@@ -108,7 +90,6 @@ async def generate_chat_name_endpoint(
 ) -> ChatNameResponse:
     """
     Generate a concise name for a chat conversation based on chat history.
-    Now uses the same OpenAI implementation as retello/ui/app.py
     """
     try:
         # Convert Pydantic models to dict format expected by generate_chat_name
@@ -133,7 +114,6 @@ async def generate_session_name(
 ) -> ChatNameResponse:
     """
     Generate a name for a session based on all chats in that session.
-    Now uses the same OpenAI implementation as retello/ui/app.py
     """
     try:
         # Get session and verify ownership

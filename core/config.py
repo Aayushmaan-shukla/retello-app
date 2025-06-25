@@ -28,9 +28,11 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
-    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
 
     MICRO_URL: str = os.getenv("MICRO_URL", "https://api-microretello.enpointe.io/ask")
+    
+    # Why-this-phone microservice URL (defaults to same base as MICRO_URL)
+    WHY_THIS_PHONE_URL: str = os.getenv("WHY_THIS_PHONE_URL", "https://api-microretello.enpointe.io/why-this-phone")
 
     # [NEW] Added on 2024-03-21: Streaming-related settings
     STREAMING_CHUNK_SIZE: int = int(os.getenv("STREAMING_CHUNK_SIZE", "1024"))  # Size of each chunk in bytes
