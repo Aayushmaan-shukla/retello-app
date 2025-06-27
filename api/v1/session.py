@@ -1,6 +1,7 @@
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.orm import Session
+from sqlalchemy import or_, and_, func
 import uuid
 from datetime import datetime
 import re
@@ -8,7 +9,10 @@ import re
 from app.db.base import get_db
 from app.models.session import Session
 from app.models.chat import Chat
-from app.schemas.session import SessionCreate, Session as SessionSchema, SessionUpdate
+from app.schemas.session import (
+    SessionCreate, Session as SessionSchema, SessionUpdate,
+    SessionSearchResponse, SessionSearchResult, SessionSearchSession, SessionSearchChat
+)
 from app.api.v1.auth import get_current_user
 from app.models.user import User
 import logging
@@ -274,4 +278,176 @@ async def get_session_metadata(
         "total_sessions": total_sessions,
         "latest_session_id": latest_session.id if latest_session else None,
         "latest_updated_at": latest_session.updated_at if latest_session else None
-    } 
+    }
+
+@router.get("/search", response_model=SessionSearchResponse)
+async def search_sessions(
+    *,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    response: Response,
+    q: str = Query(..., min_length=1, max_length=500, description="Search query"),
+    search_in: Literal["prompts", "responses", "both"] = Query("both", description="What to search in"),
+    limit: Optional[int] = Query(10, ge=1, le=50, description="Number of sessions to return"),
+    offset: Optional[int] = Query(0, ge=0, description="Number of sessions to skip"),
+    include_chat_limit: Optional[int] = Query(5, ge=1, le=20, description="Max matching chats per session")
+) -> SessionSearchResponse:
+    """
+    Search through user's session history including prompts and responses.
+    
+    - q: Search query (required, 1-500 characters)
+    - search_in: Search in 'prompts', 'responses', or 'both' (default: 'both')
+    - limit: Number of sessions to return (default: 10, max: 50)
+    - offset: Number of sessions to skip for pagination (default: 0)
+    - include_chat_limit: Max matching chats to include per session (default: 5, max: 20)
+    
+    Returns sessions that contain matching chats, ordered by most recent match first.
+    """
+    logger.info(f"Searching sessions for user {current_user.id}: query='{q}', search_in='{search_in}', limit={limit}, offset={offset}")
+    
+    # Prepare search term (case-insensitive)
+    search_term = f"%{q.lower()}%"
+    
+    # Build the search conditions based on search_in parameter
+    search_conditions = []
+    
+    if search_in in ["prompts", "both"]:
+        search_conditions.append(func.lower(Chat.prompt).like(search_term))
+    
+    if search_in in ["responses", "both"]:
+        search_conditions.append(
+            and_(
+                Chat.response.isnot(None),
+                Chat.response != "",
+                func.lower(Chat.response).like(search_term)
+            )
+        )
+    
+    if not search_conditions:
+        raise HTTPException(status_code=400, detail="Invalid search_in parameter")
+    
+    # Combine search conditions with OR
+    combined_search_condition = or_(*search_conditions)
+    
+    # First, get all sessions that have matching chats
+    sessions_with_matches_query = db.query(Session.id).join(Chat).filter(
+        Session.user_id == current_user.id,
+        combined_search_condition
+    ).distinct()
+    
+    # Get total count of sessions with matches
+    total_sessions_with_matches = sessions_with_matches_query.count()
+    
+    # Get total count of individual chat matches
+    total_chat_matches = db.query(Chat).join(Session).filter(
+        Session.user_id == current_user.id,
+        combined_search_condition
+    ).count()
+    
+    # Get paginated session IDs ordered by most recent matching chat
+    session_ids_with_recent_match = db.query(
+        Session.id,
+        func.max(Chat.created_at).label('latest_match')
+    ).join(Chat).filter(
+        Session.user_id == current_user.id,
+        combined_search_condition
+    ).group_by(Session.id).order_by(
+        func.max(Chat.created_at).desc()
+    ).offset(offset).limit(limit).all()
+    
+    # Extract session IDs
+    session_ids = [row[0] for row in session_ids_with_recent_match]
+    
+    if not session_ids:
+        # No matches found
+        response.headers["X-Total-Count"] = "0"
+        response.headers["X-Chat-Matches"] = "0"
+        response.headers["X-Has-More"] = "false"
+        
+        return SessionSearchResponse(
+            results=[],
+            total_results=0,
+            total_chat_matches=0,
+            has_more=False,
+            query=q,
+            search_in=search_in
+        )
+    
+    # Get full session details for the paginated results
+    sessions = db.query(Session).filter(
+        Session.id.in_(session_ids)
+    ).all()
+    
+    # Create a mapping for quick session lookup
+    session_map = {session.id: session for session in sessions}
+    
+    # Get matching chats for these sessions
+    matching_chats_query = db.query(Chat).filter(
+        Chat.session_id.in_(session_ids),
+        combined_search_condition
+    ).order_by(Chat.created_at.desc())
+    
+    matching_chats = matching_chats_query.all()
+    
+    # Group chats by session and determine match types
+    session_results = []
+    
+    for session_id in session_ids:  # Maintain order from the query
+        session = session_map[session_id]
+        session_chats = [chat for chat in matching_chats if chat.session_id == session_id]
+        
+        # Limit chats per session
+        limited_chats = session_chats[:include_chat_limit]
+        
+        # Determine match type for each chat
+        search_chats = []
+        for chat in limited_chats:
+            match_type = "both"  # Default
+            
+            prompt_matches = q.lower() in (chat.prompt or "").lower()
+            response_matches = q.lower() in (chat.response or "").lower()
+            
+            if prompt_matches and response_matches:
+                match_type = "both"
+            elif prompt_matches:
+                match_type = "prompt"
+            elif response_matches:
+                match_type = "response"
+            
+            search_chats.append(SessionSearchChat(
+                id=chat.id,
+                prompt=chat.prompt,
+                response=chat.response,
+                created_at=chat.created_at,
+                match_type=match_type
+            ))
+        
+        session_results.append(SessionSearchResult(
+            session=SessionSearchSession(
+                id=session.id,
+                name=session.name,
+                created_at=session.created_at,
+                updated_at=session.updated_at
+            ),
+            matching_chats=search_chats,
+            total_matches_in_session=len(session_chats)
+        ))
+    
+    # Set response headers
+    has_more = offset + limit < total_sessions_with_matches
+    response.headers["X-Total-Count"] = str(total_sessions_with_matches)
+    response.headers["X-Chat-Matches"] = str(total_chat_matches)
+    response.headers["X-Page-Size"] = str(limit)
+    response.headers["X-Page-Offset"] = str(offset)
+    response.headers["X-Has-More"] = str(has_more).lower()
+    
+    logger.info(f"Search completed: found {total_sessions_with_matches} sessions with {total_chat_matches} total chat matches")
+    
+    return SessionSearchResponse(
+        results=session_results,
+        total_results=total_sessions_with_matches,
+        total_chat_matches=total_chat_matches,
+        has_more=has_more,
+        query=q,
+        search_in=search_in
+    ) 
