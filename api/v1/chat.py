@@ -26,12 +26,56 @@ logger = logging.getLogger("chat")
 
 # Pydantic models for why-this-phone endpoint
 class ChatMessage(BaseModel):
-    role: str
-    content: str
+    # Handle the actual format sent by frontend
+    prompt: str = None
+    id: str = None
+    user_id: str = None
+    session_id: str = None
+    response: str = None
+    phones: list = None
+    
+    # Also support the standard role/content format if needed
+    role: str = None
+    content: str = None
+    
+    # Allow any additional fields
+    class Config:
+        extra = "allow"
+    
+    @model_validator(mode='before')
+    @classmethod
+    def handle_chat_format_variations(cls, data):
+        """Handle different chat message formats"""
+        if isinstance(data, dict):
+            processed_data = data.copy()
+            
+            # If we have prompt but no content, map prompt to content
+            if 'prompt' in processed_data and 'content' not in processed_data:
+                processed_data['content'] = processed_data.get('prompt', '')
+                
+            # If we have response but no content, and no prompt, map response to content
+            if 'response' in processed_data and 'content' not in processed_data and 'prompt' not in processed_data:
+                processed_data['content'] = processed_data.get('response', '')
+            
+            # Set default role if not provided
+            if 'role' not in processed_data:
+                if 'prompt' in processed_data:
+                    processed_data['role'] = 'user'
+                elif 'response' in processed_data:
+                    processed_data['role'] = 'assistant'
+                else:
+                    processed_data['role'] = 'user'  # default fallback
+            
+            return processed_data
+        return data
 
 class PhoneData(BaseModel):
     name: str
     brand: str = None
+    original_brand_name: str = None
+    variants: list = None
+    
+    # Flat fields (for direct specification or extracted from variants)
     price: Union[float, str, None] = None
     camera_mp: Union[int, str, None] = None
     battery_mah: Union[int, str, None] = None
@@ -161,10 +205,24 @@ class PhoneData(BaseModel):
     @model_validator(mode='before')
     @classmethod
     def handle_field_variations(cls, data):
-        """Handle different field name variations and common aliases"""
+        """Handle different field name variations and extract from variants"""
         if isinstance(data, dict):
             # Create a copy to avoid modifying the original
             processed_data = data.copy()
+            
+            # Extract data from first variant if available and flat fields are missing
+            if 'variants' in processed_data and processed_data['variants']:
+                first_variant = processed_data['variants'][0] if isinstance(processed_data['variants'], list) else {}
+                
+                # Extract from variant if flat fields are not provided
+                if not processed_data.get('price') and first_variant.get('price'):
+                    processed_data['price'] = first_variant.get('price')
+                
+                if not processed_data.get('ram_gb') and first_variant.get('ram_size'):
+                    processed_data['ram_gb'] = first_variant.get('ram_size')
+                    
+                if not processed_data.get('storage_gb') and first_variant.get('storage_size'):
+                    processed_data['storage_gb'] = first_variant.get('storage_size')
             
             # Handle battery field variations
             if 'battery_capacity' in processed_data and 'battery_mah' not in processed_data:
@@ -601,39 +659,52 @@ async def create_chat(
         logger.error(f"Error creating chat: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error creating chat: {str(e)}")
 
-@router.post("/why-this-phone", response_model=WhyThisPhoneResponse)
+@router.post("/why-this-phone")
 async def why_this_phone(
-    request: WhyThisPhoneRequest,
+    request: dict,  # Accept any JSON structure
     current_user: User = Depends(get_current_user)
-) -> WhyThisPhoneResponse:
+):
     """
-    Generate explanation for why a specific phone matches user's needs
-    based on their chat history and phone specifications.
-    
-    Calls external microservice following the same pattern as /ask endpoint.
+    Generate explanation for why a specific phone matches user's needs.
+    Accepts any JSON structure - maximum flexibility for changing frontends.
     """
     try:
-        # Validate inputs
-        if not request.chat_history:
+        # Minimal validation - only check for essential data
+        chat_history = request.get("chat_history", [])
+        phone_data = request.get("phone", {})
+        
+        if not chat_history:
             raise HTTPException(status_code=400, detail="Chat history cannot be empty")
         
-        if not request.phone.name:
+        phone_name = phone_data.get("name") or phone_data.get("phone_name") or "Unknown Phone"
+        if not phone_name or phone_name == "Unknown Phone":
             raise HTTPException(status_code=400, detail="Phone name is required")
         
-        # Convert chat history to the format expected by microservice
+        # Flexibly process chat history - handle any format
         conversation = []
-        for message in request.chat_history:
-            conversation.append({
-                "role": message.role,
-                "content": message.content
-            })
+        for message in chat_history:
+            if isinstance(message, dict):
+                # Handle multiple possible formats
+                content = (message.get("content") or 
+                          message.get("prompt") or 
+                          message.get("response") or 
+                          str(message))
+                
+                role = message.get("role", "user")  # Default to user
+                
+                conversation.append({
+                    "role": role,
+                    "content": content
+                })
         
-        # Prepare payload for external microservice
+        # Prepare payload - pass everything through, let microservice handle it
         payload = {
             "chat_history": conversation,
-            "phone": request.phone.dict(),
+            "phone": phone_data,  # Pass raw phone data
             "request_type": "why_this_phone",
-            "user_id": current_user.id
+            "user_id": current_user.id,
+            # Include any additional fields from request
+            **{k: v for k, v in request.items() if k not in ["chat_history", "phone"]}
         }
         
         logger.info(f"Calling why-this-phone microservice for phone: {request.phone.name}, user: {current_user.id}")
@@ -658,8 +729,8 @@ async def why_this_phone(
                 if not explanation:
                     raise HTTPException(status_code=500, detail="Empty response from microservice")
                 
-                logger.info(f"Successfully generated why-this-phone explanation for {request.phone.name}")
-                return WhyThisPhoneResponse(why_this_phone=explanation)
+                logger.info(f"Successfully generated why-this-phone explanation for {phone_name}")
+                return {"why_this_phone": explanation}
                 
             except httpx.HTTPStatusError as e:
                 logger.error(f"Microservice HTTP error: {e.response.status_code} - {e.response.text}")
