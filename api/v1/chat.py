@@ -1,4 +1,4 @@
-from typing import Any, List
+from typing import Any, List, Union
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -10,7 +10,8 @@ import httpx
 from datetime import datetime, timedelta
 import logging
 import google.generativeai as genai
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator, model_validator
+import re
 
 from app.core.config import settings
 from app.db.base import get_db
@@ -31,16 +32,162 @@ class ChatMessage(BaseModel):
 class PhoneData(BaseModel):
     name: str
     brand: str = None
-    price: float = None
-    camera_mp: int = None
-    battery_mah: int = None
-    storage_gb: int = None
-    ram_gb: int = None
-    screen_size: float = None
+    price: Union[float, str, None] = None
+    camera_mp: Union[int, str, None] = None
+    battery_mah: Union[int, str, None] = None
+    storage_gb: Union[int, str, None] = None
+    ram_gb: Union[int, str, None] = None
+    screen_size: Union[float, str, None] = None
     processor: str = None
+    
     # Allow additional fields
     class Config:
         extra = "allow"
+    
+    @field_validator('price', mode='before')
+    @classmethod
+    def validate_price(cls, v):
+        """Convert price from various formats to float"""
+        if v is None:
+            return None
+        if isinstance(v, (int, float)):
+            return float(v)
+        if isinstance(v, str):
+            # Remove currency symbols, commas, and extract numbers
+            # Examples: "$999", "999.99", "₹50,000", "999 USD"
+            cleaned = re.sub(r'[^\d.]', '', v)
+            if cleaned:
+                try:
+                    return float(cleaned)
+                except ValueError:
+                    pass
+        return None
+    
+    @field_validator('camera_mp', mode='before')
+    @classmethod
+    def validate_camera_mp(cls, v):
+        """Convert camera MP from various formats to int"""
+        if v is None:
+            return None
+        if isinstance(v, int):
+            return v
+        if isinstance(v, (float, str)):
+            # Extract numbers from strings like "48MP", "48 megapixels", "48.0"
+            match = re.search(r'(\d+)', str(v))
+            if match:
+                try:
+                    return int(match.group(1))
+                except ValueError:
+                    pass
+        return None
+    
+    @field_validator('battery_mah', mode='before')
+    @classmethod
+    def validate_battery_mah(cls, v):
+        """Convert battery capacity from various formats to int"""
+        if v is None:
+            return None
+        if isinstance(v, int):
+            return v
+        if isinstance(v, (float, str)):
+            # Extract numbers from strings like "3274mAh", "3274 mAh", "3274"
+            match = re.search(r'(\d+)', str(v))
+            if match:
+                try:
+                    return int(match.group(1))
+                except ValueError:
+                    pass
+        return None
+    
+    @field_validator('storage_gb', mode='before')
+    @classmethod
+    def validate_storage_gb(cls, v):
+        """Convert storage from various formats to int (convert to GB)"""
+        if v is None:
+            return None
+        if isinstance(v, int):
+            return v
+        if isinstance(v, (float, str)):
+            # Handle various formats: "128GB", "1TB", "256 GB", "512"
+            s = str(v).upper()
+            # Extract number and check for TB
+            match = re.search(r'(\d+)', s)
+            if match:
+                try:
+                    number = int(match.group(1))
+                    if 'TB' in s:
+                        return number * 1024  # Convert TB to GB
+                    return number
+                except ValueError:
+                    pass
+        return None
+    
+    @field_validator('ram_gb', mode='before')
+    @classmethod
+    def validate_ram_gb(cls, v):
+        """Convert RAM from various formats to int"""
+        if v is None:
+            return None
+        if isinstance(v, int):
+            return v
+        if isinstance(v, (float, str)):
+            # Extract numbers from strings like "8GB", "8 GB RAM", "8"
+            match = re.search(r'(\d+)', str(v))
+            if match:
+                try:
+                    return int(match.group(1))
+                except ValueError:
+                    pass
+        return None
+    
+    @field_validator('screen_size', mode='before')
+    @classmethod
+    def validate_screen_size(cls, v):
+        """Convert screen size from various formats to float"""
+        if v is None:
+            return None
+        if isinstance(v, (int, float)):
+            return float(v)
+        if isinstance(v, str):
+            # Extract numbers from strings like "6.1 inches", "6.1\"", "6.1 in"
+            match = re.search(r'(\d+\.?\d*)', v)
+            if match:
+                try:
+                    return float(match.group(1))
+                except ValueError:
+                    pass
+        return None
+    
+    @model_validator(mode='before')
+    @classmethod
+    def handle_field_variations(cls, data):
+        """Handle different field name variations and common aliases"""
+        if isinstance(data, dict):
+            # Create a copy to avoid modifying the original
+            processed_data = data.copy()
+            
+            # Handle battery field variations
+            if 'battery_capacity' in processed_data and 'battery_mah' not in processed_data:
+                processed_data['battery_mah'] = processed_data.get('battery_capacity')
+            
+            # Handle camera field variations  
+            if 'main_camera_mp' in processed_data and 'camera_mp' not in processed_data:
+                processed_data['camera_mp'] = processed_data.get('main_camera_mp')
+            
+            # Handle screen size variations
+            if 'display_size' in processed_data and 'screen_size' not in processed_data:
+                processed_data['screen_size'] = processed_data.get('display_size')
+            
+            # Handle storage variations
+            if 'storage_size' in processed_data and 'storage_gb' not in processed_data:
+                processed_data['storage_gb'] = processed_data.get('storage_size')
+            
+            # Handle RAM variations
+            if 'ram_size' in processed_data and 'ram_gb' not in processed_data:
+                processed_data['ram_gb'] = processed_data.get('ram_size')
+            
+            return processed_data
+        return data
 
 class WhyThisPhoneRequest(BaseModel):
     chat_history: List[ChatMessage]

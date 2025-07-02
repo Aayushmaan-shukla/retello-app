@@ -148,8 +148,8 @@ def generate_chat_name(chat_history: List[Dict[str, str]]) -> str:
     # Format messages for the AI
     filtered_messages = []
     for message in meaningful_messages:
-        role = "user" if message['role'] == 'user' else "assistant"
-        filtered_messages.append(f"{role}: {message['content']}")
+            role = "user" if message['role'] == 'user' else "assistant"
+            filtered_messages.append(f"{role}: {message['content']}")
 
     # Create the conversation context
     conversation_text = "\n".join(filtered_messages)
