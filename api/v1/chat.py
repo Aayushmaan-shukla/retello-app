@@ -707,7 +707,7 @@ async def why_this_phone(
             **{k: v for k, v in request.items() if k not in ["chat_history", "phone"]}
         }
         
-        logger.info(f"Calling why-this-phone microservice for phone: {request.phone.name}, user: {current_user.id}")
+        logger.info(f"Calling why-this-phone microservice for phone: {phone_name}, user: {current_user.id}")
         
         # Call external microservice (same pattern as /ask endpoint)
         microservice_url = settings.WHY_THIS_PHONE_URL
