@@ -758,6 +758,93 @@ async def why_this_phone(
         logger.error(f"Unexpected error in why-this-phone endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
+
+@router.post("/get-more-phones")
+async def get_more_phones(
+    request: dict,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Fetch more phones from database with pagination support.
+    Similar to the existing UI endpoint but integrated with the main API.
+    
+    Expected request format:
+    {
+        "fetch_type": "flagships" | "budget_ranges" | "params_based",
+        "params": {...},  // Optional parameters for filtering
+        "phone_names": [...],  // Optional phone names for specific queries
+        "request_id": "uuid"  // Optional request ID for tracking
+    }
+    """
+    try:
+        # Extract parameters from request
+        fetch_type = request.get('fetch_type')
+        params = request.get('params', None)
+        phone_names = request.get('phone_names', None)
+        request_id = request.get('request_id', None)
+        
+        # Validate fetch_type
+        allowed_fetch_types = ['flagships', 'budget_ranges', 'params_based']
+        if not fetch_type:
+            raise HTTPException(
+                status_code=400, 
+                detail="fetch_type is required"
+            )
+        
+        if fetch_type not in allowed_fetch_types:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid fetch_type. Must be one of: {', '.join(allowed_fetch_types)}"
+            )
+        
+        # Generate request_id if not provided
+        if not request_id:
+            request_id = str(uuid.uuid4())
+        
+        logger.info(f"Calling get-more-phones for fetch_type: {fetch_type}, user: {current_user.id}")
+        
+        # Prepare payload for external microservice (same as used in retello/ui/app.py)
+        payload = {
+            "fetch_type": fetch_type,
+            "params": params,
+            "phone_names": phone_names,
+            "request_id": request_id
+        }
+        
+        # Call the external microservice endpoint
+        # This calls the get-more-phones microservice which implements the phone fetching logic
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Use the configured microservice URL
+            microservice_url = settings.GET_MORE_PHONES_URL
+            
+            response = await client.post(
+                microservice_url,
+                json=payload,
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if response.status_code != 200:
+                logger.error(f"Microservice returned error: {response.status_code} - {response.text}")
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Microservice error: {response.text}"
+                )
+            
+            result = response.json()
+            
+            logger.info(f"Successfully fetched {result.get('total_fetched', 0)} phones for fetch_type: {fetch_type}")
+            
+            # Return the result directly
+            return result
+            
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in get-more-phones endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
 @router.post("/{session_id}", response_model=None) # response_model=ChatSchema is misleading for StreamingResponse
 async def continue_chat(
     *,
