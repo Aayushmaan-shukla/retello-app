@@ -49,6 +49,8 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000",
         "http://127.0.0.1:4100",
         "https://api-retello.enpointe.io",
+        "https://api-uat-retello.enpointe.io",
+        "https://api-uat-microretello.enpointe.io",
         "https://retello.enpointe.io",
         "https://retello-uat.enpointe.io"
     ]
