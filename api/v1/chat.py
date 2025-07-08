@@ -429,28 +429,11 @@ async def stream_response_wrapper(url: str, json_payload: dict, db: Session, cha
             logger.error(f"HTTPStatusError: {e_http_status.request.url} - Status {e_http_status.response.status_code}")
             await handle_streaming_error(db, chat_id, e_http_status)
             error_content = f'External service error: {e_http_status.response.status_code}'
-            
-            # Safely handle streaming response
-            if hasattr(e_http_status.response, 'is_closed') and not e_http_status.response.is_closed:
-                # For streaming responses, read the entire response before trying to parse
-                try:
-                    error_text = await e_http_status.response.aread()
-                    try:
-                        error_details = json.loads(error_text)
-                        error_content += f" - {json.dumps(error_details)}"
-                    except json.JSONDecodeError:
-                        # If not JSON, use text directly
-                        error_content += f" - {error_text.decode('utf-8')[:200]}"
-                except Exception as read_error:
-                    logger.error(f"Error reading streaming response: {read_error}")
-                    error_content += " - Could not read error details"
-            else:
-                # For non-streaming responses, use existing logic
-                try:
-                    error_details = e_http_status.response.json()
-                    error_content += f" - {json.dumps(error_details)}"
-                except json.JSONDecodeError:
-                    error_content += f" - {e_http_status.response.text[:200]}"
+            try: # Try to get more details from response if JSON
+                error_details = e_http_status.response.json()
+                error_content += f" - {json.dumps(error_details)}"
+            except json.JSONDecodeError:
+                error_content += f" - {e_http_status.response.text[:200]}" # First 200 chars of text response
 
             yield f"data: {json.dumps({'type': 'error', 'content': error_content})}\n\n"
         except httpx.RequestError as e_request: # Covers network errors, DNS failures, timeouts before response, etc.
@@ -709,10 +692,10 @@ async def why_this_phone(
                 
                 role = message.get("role", "user")  # Default to user
                 
-            conversation.append({
+                conversation.append({
                     "role": role,
                     "content": content
-            })
+                })
         
         # Prepare payload - pass everything through, let microservice handle it
         payload = {
