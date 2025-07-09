@@ -340,6 +340,13 @@ async def stream_response(response: httpx.Response, db: Session, chat_id: str):
                                     chat.button_text = metadata_content.get('button_text', chat.button_text)
                                 if 'why_this_phone' in metadata_content:
                                     chat.why_this_phone = metadata_content['why_this_phone']
+                                
+                                # Add has_more flag to current_params for frontend compatibility
+                                if 'has_more' in metadata_content:
+                                    if not chat.current_params:
+                                        chat.current_params = {}
+                                    chat.current_params['has_more'] = metadata_content['has_more']
+                                
                                 # Add other metadata fields as needed e.g.
                                 # if 'query_type' in metadata_content: chat.query_type = metadata_content['query_type']
                                 db.add(chat)
@@ -780,14 +787,14 @@ async def get_more_phones(
     """
     Fetch more phones from database with pagination support.
     
-    Expected request format:
+    Expected request format from frontend:
     {
         "current_params": {...},  // Current parameters from the conversation
-        "intent_type": str,      // Intent type for the request
+        "intent_type": str,       // Intent type for the request
         "fetch_type": "flagships" | "budget_ranges" | "params_based",
-        "params": {...},         // Optional additional parameters for filtering
-        "phone_names": [...],    // Optional phone names for specific queries
-        "request_id": "uuid"     // Optional request ID for tracking
+        "params": {...},          // Optional additional parameters for filtering
+        "phone_names": [...],     // Optional phone names for specific queries
+        "request_id": "uuid"      // Optional request ID for tracking
     }
     """
     try:
@@ -799,20 +806,13 @@ async def get_more_phones(
         phone_names = request.get('phone_names', None)
         request_id = request.get('request_id', None)
         
-        # Validate required fields
-        if not current_params:
-            raise HTTPException(
-                status_code=400, 
-                detail="current_params is required"
-            )
-            
-        if not intent_type:
-            raise HTTPException(
-                status_code=400, 
-                detail="intent_type is required"
-            )
+        # Handle backward compatibility - if current_params is not provided, 
+        # check if the parameters are directly in the request
+        if not current_params and params:
+            current_params = params
+            logger.info("Using 'params' as 'current_params' for backward compatibility")
         
-        # Validate fetch_type
+        # Validate fetch_type (required)
         allowed_fetch_types = ['flagships', 'budget_ranges', 'params_based']
         if not fetch_type:
             raise HTTPException(
@@ -830,21 +830,30 @@ async def get_more_phones(
         if not request_id:
             request_id = str(uuid.uuid4())
         
+        # Set default intent_type if not provided
+        if not intent_type:
+            intent_type = "general_search"
+            logger.info("Using default intent_type: general_search")
+        
         logger.info(f"Calling get-more-phones for fetch_type: {fetch_type}, intent_type: {intent_type}, user: {current_user.id}")
+        logger.info(f"Current params structure: {current_params}")
         
         # Prepare payload for external microservice
+        # Send the structure that the microservice expects
         payload = {
-            "current_params": current_params,
-            "intent_type": intent_type,
             "fetch_type": fetch_type,
-            "params": params,
+            "params": current_params or {},  # Use current_params as the main params
             "phone_names": phone_names,
-            "request_id": request_id
+            "request_id": request_id,
+            "intent_type": intent_type
         }
         
         # Call the external microservice endpoint
         async with httpx.AsyncClient(timeout=30.0) as client:
             microservice_url = settings.GET_MORE_PHONES_URL
+            
+            logger.info(f"Sending request to microservice: {microservice_url}")
+            logger.info(f"Payload being sent: {json.dumps(payload, indent=2)}")
             
             response = await client.post(
                 microservice_url,
@@ -852,19 +861,46 @@ async def get_more_phones(
                 headers={"Content-Type": "application/json"}
             )
             
+            logger.info(f"Microservice response status: {response.status_code}")
+            
             if response.status_code != 200:
-                logger.error(f"Microservice returned error: {response.status_code} - {response.text}")
+                logger.error(f"Microservice returned error: {response.status_code}")
+                logger.error(f"Response text: {response.text}")
+                logger.error(f"Response headers: {dict(response.headers)}")
                 raise HTTPException(
                     status_code=response.status_code,
                     detail=f"Microservice error: {response.text}"
                 )
             
-            result = response.json()
-            
-            logger.info(f"Successfully fetched {result.get('total_fetched', 0)} phones for fetch_type: {fetch_type}")
-            
-            # Return the result directly
-            return result
+            try:
+                result = response.json()
+                logger.info(f"Successfully fetched {result.get('total_fetched', 0)} phones for fetch_type: {fetch_type}")
+                
+                # Ensure the response includes has_more flag for frontend compatibility
+                if 'has_more' not in result:
+                    # If microservice doesn't provide has_more, determine it based on results
+                    phones_count = len(result.get('phones', []))
+                    total_fetched = result.get('total_fetched', phones_count)
+                    result['has_more'] = total_fetched > 0  # Default logic
+                
+                # Add metadata structure that frontend expects
+                if 'metadata' not in result:
+                    result['metadata'] = {
+                        'total_results': result.get('total_fetched', 0),
+                        'has_more': result.get('has_more', False),
+                        'current_params': current_params or {},
+                        'fetch_type': fetch_type,
+                        'intent_type': intent_type
+                    }
+                
+                return result
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse microservice response as JSON: {e}")
+                logger.error(f"Response text: {response.text}")
+                raise HTTPException(
+                    status_code=502,
+                    detail="Invalid JSON response from microservice"
+                )
             
     except HTTPException:
         # Re-raise HTTP exceptions
