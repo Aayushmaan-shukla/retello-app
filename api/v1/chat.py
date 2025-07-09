@@ -766,22 +766,38 @@ async def get_more_phones(
 ):
     """
     Fetch more phones from database with pagination support.
-    Similar to the existing UI endpoint but integrated with the main API.
     
     Expected request format:
     {
+        "current_params": {...},  // Current parameters from the conversation
+        "intent_type": str,      // Intent type for the request
         "fetch_type": "flagships" | "budget_ranges" | "params_based",
-        "params": {...},  // Optional parameters for filtering
-        "phone_names": [...],  // Optional phone names for specific queries
-        "request_id": "uuid"  // Optional request ID for tracking
+        "params": {...},         // Optional additional parameters for filtering
+        "phone_names": [...],    // Optional phone names for specific queries
+        "request_id": "uuid"     // Optional request ID for tracking
     }
     """
     try:
         # Extract parameters from request
+        current_params = request.get('current_params')
+        intent_type = request.get('intent_type')
         fetch_type = request.get('fetch_type')
         params = request.get('params', None)
         phone_names = request.get('phone_names', None)
         request_id = request.get('request_id', None)
+        
+        # Validate required fields
+        if not current_params:
+            raise HTTPException(
+                status_code=400, 
+                detail="current_params is required"
+            )
+            
+        if not intent_type:
+            raise HTTPException(
+                status_code=400, 
+                detail="intent_type is required"
+            )
         
         # Validate fetch_type
         allowed_fetch_types = ['flagships', 'budget_ranges', 'params_based']
@@ -801,10 +817,12 @@ async def get_more_phones(
         if not request_id:
             request_id = str(uuid.uuid4())
         
-        logger.info(f"Calling get-more-phones for fetch_type: {fetch_type}, user: {current_user.id}")
+        logger.info(f"Calling get-more-phones for fetch_type: {fetch_type}, intent_type: {intent_type}, user: {current_user.id}")
         
-        # Prepare payload for external microservice (same as used in retello/ui/app.py)
+        # Prepare payload for external microservice
         payload = {
+            "current_params": current_params,
+            "intent_type": intent_type,
             "fetch_type": fetch_type,
             "params": params,
             "phone_names": phone_names,
@@ -812,10 +830,7 @@ async def get_more_phones(
         }
         
         # Call the external microservice endpoint
-        # This calls the get-more-phones microservice which implements the phone fetching logic
-        
         async with httpx.AsyncClient(timeout=30.0) as client:
-            # Use the configured microservice URL
             microservice_url = settings.GET_MORE_PHONES_URL
             
             response = await client.post(
