@@ -430,10 +430,23 @@ async def stream_response_wrapper(url: str, json_payload: dict, db: Session, cha
             await handle_streaming_error(db, chat_id, e_http_status)
             error_content = f'External service error: {e_http_status.response.status_code}'
             try: # Try to get more details from response if JSON
-                error_details = e_http_status.response.json()
-                error_content += f" - {json.dumps(error_details)}"
-            except json.JSONDecodeError:
-                error_content += f" - {e_http_status.response.text[:200]}" # First 200 chars of text response
+                # For streaming responses, we need to read the content first
+                if hasattr(e_http_status.response, 'is_closed') and not e_http_status.response.is_closed:
+                    # This is a streaming response that hasn't been read yet
+                    response_content = await e_http_status.response.aread()
+                    response_text = response_content.decode('utf-8')
+                    try:
+                        error_details = json.loads(response_text)
+                        error_content += f" - {json.dumps(error_details)}"
+                    except json.JSONDecodeError:
+                        error_content += f" - {response_text[:200]}"
+                else:
+                    # Regular response, use existing logic
+                    error_details = e_http_status.response.json()
+                    error_content += f" - {json.dumps(error_details)}"
+            except Exception as parse_error:
+                logger.error(f"Error parsing response details: {parse_error}")
+                error_content += " - Could not parse error details"
 
             yield f"data: {json.dumps({'type': 'error', 'content': error_content})}\n\n"
         except httpx.RequestError as e_request: # Covers network errors, DNS failures, timeouts before response, etc.
