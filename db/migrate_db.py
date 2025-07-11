@@ -1,6 +1,10 @@
 from sqlalchemy import create_engine, text
 from app.core.config import settings
-from app.core.logging_config import logger
+import logging
+
+# Set up logging for migration
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 def migrate_db():
     engine = create_engine(settings.DATABASE_URL)
