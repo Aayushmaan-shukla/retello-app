@@ -785,7 +785,8 @@ async def why_this_phone(
 @router.post("/get-more-phones")
 async def get_more_phones(
     request: dict,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """
     Fetch more phones from database with pagination support.
@@ -886,15 +887,72 @@ async def get_more_phones(
                     total_fetched = result.get('total_fetched', phones_count)
                     result['has_more'] = total_fetched > 0  # Default logic
                 
+                # Update current_params with any new information from microservice response
+                updated_current_params = current_params.copy() if current_params else {}
+                
+                # If microservice returns updated params, merge them
+                if 'current_params' in result:
+                    updated_current_params.update(result['current_params'])
+                    logger.info(f"Merged updated current_params from microservice")
+                
+                # Always update has_more in current_params
+                updated_current_params['has_more'] = result.get('has_more', False)
+                
+                # Update the last chat in the database with new current_params and has_more
+                try:
+                    # Find the most recent chat for this user that has current_params
+                    # This ensures we update the chat that likely triggered the "get more" request
+                    last_chat = db.query(Chat).filter(
+                        Chat.user_id == current_user.id,
+                        Chat.current_params.isnot(None)
+                    ).order_by(Chat.created_at.desc()).first()
+                    
+                    # If no chat with current_params found, fall back to most recent chat
+                    if not last_chat:
+                        last_chat = db.query(Chat).filter(
+                            Chat.user_id == current_user.id
+                        ).order_by(Chat.created_at.desc()).first()
+                    
+                    if last_chat:
+                        # Ensure current_params is not None before updating
+                        if last_chat.current_params is None:
+                            last_chat.current_params = {}
+                            
+                        # Update current_params in database
+                        last_chat.current_params = updated_current_params
+                        
+                        # Update has_more field in database
+                        last_chat.has_more = result.get('has_more', False)
+                        
+                        # Update updated_at timestamp
+                        last_chat.updated_at = datetime.utcnow()
+                        
+                        db.add(last_chat)
+                        db.commit()
+                        
+                        logger.info(f"Updated last chat {last_chat.id} with new current_params and has_more={result.get('has_more', False)}")
+                        logger.debug(f"Updated current_params: {updated_current_params}")
+                    else:
+                        logger.warning(f"No previous chat found for user {current_user.id} to update current_params")
+                        
+                except Exception as db_error:
+                    logger.error(f"Error updating database with new current_params: {str(db_error)}")
+                    db.rollback()  # Rollback on error
+                    # Don't fail the request if database update fails
+                    pass
+                
                 # Add metadata structure that frontend expects
                 if 'metadata' not in result:
                     result['metadata'] = {
                         'total_results': result.get('total_fetched', 0),
                         'has_more': result.get('has_more', False),
-                        'current_params': current_params or {},
+                        'current_params': updated_current_params,  # Use updated params
                         'fetch_type': fetch_type,
                         'intent_type': intent_type
                     }
+                else:
+                    # Update existing metadata with current_params
+                    result['metadata']['current_params'] = updated_current_params
                 
                 return result
             except json.JSONDecodeError as e:
