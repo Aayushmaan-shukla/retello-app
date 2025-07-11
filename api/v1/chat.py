@@ -346,6 +346,8 @@ async def stream_response(response: httpx.Response, db: Session, chat_id: str):
                                     if not chat.current_params:
                                         chat.current_params = {}
                                     chat.current_params['has_more'] = metadata_content['has_more']
+                                    # Also store has_more as a separate field for easier querying
+                                    chat.has_more = metadata_content['has_more']
                                 
                                 # Add other metadata fields as needed e.g.
                                 # if 'query_type' in metadata_content: chat.query_type = metadata_content['query_type']
@@ -623,6 +625,7 @@ async def create_chat(
             current_params={},
             button_text="See more", # Default value
             why_this_phone=[],
+            has_more=False,  # Default value for has_more
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow()
         )
@@ -1067,6 +1070,7 @@ async def continue_chat(
         current_params={},
         button_text="See more", # Default value
         why_this_phone=[],
+        has_more=False,  # Default value for has_more
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow()
     )
