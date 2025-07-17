@@ -64,12 +64,6 @@ class Settings(BaseSettings):
     
     # Gupshup Limits (from dashboard)
     GUPSHUP_DAILY_LIMIT: int = int(os.getenv("GUPSHUP_DAILY_LIMIT", "250"))  # 250 customers/24 hrs
-    
-    # Invite System Configuration
-    INVITE_MAX_GENERATION_LIMIT: int = int(os.getenv("INVITE_MAX_GENERATION_LIMIT", "10"))  # Max invites per user
-    INVITE_CODE_LENGTH: int = int(os.getenv("INVITE_CODE_LENGTH", "12"))  # Length of invite codes
-    INVITE_DEFAULT_MAX_USES: int = int(os.getenv("INVITE_DEFAULT_MAX_USES", "1"))  # Default uses per invite
-    INVITE_GUEST_TOKEN_EXPIRY_HOURS: int = int(os.getenv("INVITE_GUEST_TOKEN_EXPIRY_HOURS", "24"))  # Guest token expiry
 
     # CORS
     BACKEND_CORS_ORIGINS: list = [
@@ -82,8 +76,7 @@ class Settings(BaseSettings):
         "https://api-uat-retello.enpointe.io",
         "https://api-uat-microretello.enpointe.io",
         "https://retello.enpointe.io",
-        "https://early.retello.ai",
-        "https://api-early.retello.ai"
+        "https://retello-uat.enpointe.io"
     ]
 
     class Config:

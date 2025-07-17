@@ -23,5 +23,4 @@ class User(Base):
 
     # Relationships
     sessions = relationship("Session", back_populates="user")
-    chats = relationship("Chat", back_populates="user")
-    generated_invites = relationship("Invite", back_populates="generator") 
+    chats = relationship("Chat", back_populates="user") 

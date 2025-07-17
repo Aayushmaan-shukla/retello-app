@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
-from app.api.v1 import auth, user, session, chat, chat_name, otp_auth, gupshup_test, invite
+from app.api.v1 import auth, user, session, chat, chat_name, otp_auth, gupshup_test
 from app.core.logging_config import setup_logging
 import logging
 
@@ -42,7 +42,6 @@ app.include_router(user.router, prefix=settings.API_V1_STR)
 app.include_router(session.router, prefix=settings.API_V1_STR)
 app.include_router(chat.router, prefix=settings.API_V1_STR)
 app.include_router(chat_name.router, prefix=settings.API_V1_STR)
-app.include_router(invite.router, prefix=settings.API_V1_STR)  # Add invite router
 logger.info("Application startup: Routes initialized successfully")
 
 @app.get("/")

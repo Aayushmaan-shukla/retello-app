@@ -13,7 +13,6 @@ from app.models.user import User
 from app.models.session import Session
 from app.models.chat import Chat
 from app.models.otp_verification import OTPVerification
-from app.models.invite import Invite
 
 # Dependency
 def get_db():
