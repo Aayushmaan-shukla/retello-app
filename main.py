@@ -36,8 +36,8 @@ app.add_middleware(
 logger.info("Application startup: Initializing routes")
 # Include routers
 app.include_router(auth.router, prefix=settings.API_V1_STR)
-app.include_router(otp_auth.router, prefix=settings.API_V1_STR)  # Add OTP auth router
-app.include_router(gupshup_test.router, prefix=settings.API_V1_STR)  # Add Gupshup test router
+#app.include_router(otp_auth.router, prefix=settings.API_V1_STR)  # Add OTP auth router
+#app.include_router(gupshup_test.router, prefix=settings.API_V1_STR)  # Add Gupshup test router
 app.include_router(user.router, prefix=settings.API_V1_STR)
 app.include_router(session.router, prefix=settings.API_V1_STR)
 app.include_router(chat.router, prefix=settings.API_V1_STR)
