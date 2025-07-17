@@ -12,6 +12,7 @@ import logging
 import google.generativeai as genai
 from pydantic import BaseModel, field_validator, model_validator
 import re
+from urllib.parse import quote
 
 from app.core.config import settings
 from app.db.base import get_db
@@ -789,18 +790,18 @@ async def compare_phones(
 ):
     """
     Compare multiple phones based on user's needs and chat history.
-    Accepts any JSON structure - maximum flexibility for changing frontends.
+    Accepts phone names and fetches detailed phone data from existing endpoints.
     """
     try:
         # Minimal validation - only check for essential data
-        phones = request.get("phones", [])
+        phone_names = request.get("phone_names", [])
         chat_history = request.get("chat_history", [])
         
-        if not phones or not isinstance(phones, list):
-            raise HTTPException(status_code=400, detail="Phones list is required and must be a non-empty array")
+        if not phone_names or not isinstance(phone_names, list):
+            raise HTTPException(status_code=400, detail="phone_names list is required and must be a non-empty array")
         
-        if len(phones) < 2:
-            raise HTTPException(status_code=400, detail="At least 2 phones are required for comparison")
+        if len(phone_names) < 2:
+            raise HTTPException(status_code=400, detail="At least 2 phone names are required for comparison")
         
         # Flexibly process chat history - handle any format
         conversation = []
@@ -819,18 +820,68 @@ async def compare_phones(
                     "content": content
                 })
         
-        # Prepare payload - pass everything through, let microservice handle it
+        logger.info(f"Fetching detailed phone data for comparison: {phone_names[:3]}, user: {current_user.id}")
+        
+        # Fetch detailed phone data from existing endpoints
+        phones_data = []
+        failed_phones = []
+        
+        async with httpx.AsyncClient() as client:
+            for phone_name in phone_names:
+                try:
+                    # Call the existing /phone/{phone_name} endpoint
+                    encoded_phone_name = quote(phone_name, safe='')
+                    phone_url = f"{settings.RETELLO_UI_URL}/phone/{encoded_phone_name}"
+                    
+                    logger.debug(f"Fetching phone data from: {phone_url}")
+                    
+                    response = await client.get(phone_url, timeout=10.0)
+                    response.raise_for_status()
+                    
+                    phone_data = response.json()
+                    
+                    # Extract the phone data from the response
+                    if "data" in phone_data:
+                        phones_data.append(phone_data["data"])
+                        logger.debug(f"Successfully fetched data for {phone_name}")
+                    else:
+                        # If no 'data' key, use the entire response
+                        phones_data.append(phone_data)
+                        logger.debug(f"Successfully fetched data for {phone_name} (no data key)")
+                        
+                except httpx.HTTPStatusError as e:
+                    logger.error(f"Failed to fetch phone data for {phone_name}: {e.response.status_code}")
+                    failed_phones.append(phone_name)
+                except httpx.RequestError as e:
+                    logger.error(f"Request error fetching phone data for {phone_name}: {str(e)}")
+                    failed_phones.append(phone_name)
+                except Exception as e:
+                    logger.error(f"Unexpected error fetching phone data for {phone_name}: {str(e)}")
+                    failed_phones.append(phone_name)
+        
+        # Check if we have enough phones for comparison
+        if len(phones_data) < 2:
+            error_msg = f"Could not fetch enough phone data for comparison. "
+            if failed_phones:
+                error_msg += f"Failed to fetch data for: {', '.join(failed_phones)}"
+            raise HTTPException(status_code=404, detail=error_msg)
+        
+        # Log any failed phones but continue with available ones
+        if failed_phones:
+            logger.warning(f"Failed to fetch data for {len(failed_phones)} phones: {failed_phones}")
+        
+        # Prepare payload for microservice
         payload = {
-            "phones": phones,  # Pass raw phones data
+            "phones": phones_data,  # Pass detailed phone data
             "chat_history": conversation,
             "request_type": "compare_phones",
             "user_id": current_user.id,
+            "phone_names": phone_names,  # Also include original phone names
             # Include any additional fields from request
-            **{k: v for k, v in request.items() if k not in ["phones", "chat_history"]}
+            **{k: v for k, v in request.items() if k not in ["phone_names", "chat_history", "phones"]}
         }
         
-        phone_names = [phone.get("name", "Unknown") for phone in phones[:3]]  # Log first 3 phone names
-        logger.info(f"Calling compare-phones microservice for phones: {phone_names}, user: {current_user.id}")
+        logger.info(f"Calling compare-phones microservice for {len(phones_data)} phones, user: {current_user.id}")
         
         # Call external microservice (same pattern as /why-this-phone endpoint)
         microservice_url = settings.COMPARE_PHONES_URL
@@ -852,8 +903,21 @@ async def compare_phones(
                 if not comparison:
                     raise HTTPException(status_code=500, detail="Empty response from microservice")
                 
-                logger.info(f"Successfully generated phone comparison for {len(phones)} phones")
-                return {"comparison": comparison}
+                logger.info(f"Successfully generated phone comparison for {len(phones_data)} phones")
+                
+                # Include metadata about the comparison
+                response_data = {
+                    "comparison": comparison,
+                    "phones_compared": len(phones_data),
+                    "phone_names": [phone.get("name", "Unknown") for phone in phones_data]
+                }
+                
+                # Include failed phones info if any
+                if failed_phones:
+                    response_data["failed_phones"] = failed_phones
+                    response_data["warning"] = f"Could not fetch data for {len(failed_phones)} phones"
+                
+                return response_data
                 
             except httpx.HTTPStatusError as e:
                 logger.error(f"Microservice HTTP error: {e.response.status_code} - {e.response.text}")

@@ -35,13 +35,38 @@ class Settings(BaseSettings):
     WHY_THIS_PHONE_URL: str = os.getenv("WHY_THIS_PHONE_URL", "https://api-microretello.enpointe.io/why-this-phone")
     
     # Get-more-phones microservice URL (defaults to same base as MICRO_URL)
-    GET_MORE_PHONES_URL: str = os.getenv("GET_MORE_PHONES_URL", "https://api-uat-microretello.enpointe.io/get-more-phones")
-    
+    GET_MORE_PHONES_URL: str = os.getenv("GET_MORE_PHONES_URL", "https://api-microretello.enpointe.io/get-more-phones")
+
     # Compare-phones microservice URL (defaults to same base as MICRO_URL)
-    COMPARE_PHONES_URL: str = os.getenv("COMPARE_PHONES_URL", "https://api-uat-microretello.enpointe.io/compare-phones")
+    COMPARE_PHONES_URL: str = os.getenv("COMPARE_PHONES_URL", "https://api-microretello.enpointe.io/compare-phones")
+
+    # Retello UI app URL for phone search and details endpoints
+    RETELLO_UI_URL: str = os.getenv("RETELLO_UI_URL", "https://api-uat-microretello.enpointe.io")
+
     # [NEW] Added on 2024-03-21: Streaming-related settings
     STREAMING_CHUNK_SIZE: int = int(os.getenv("STREAMING_CHUNK_SIZE", "1024"))  # Size of each chunk in bytes
     STREAMING_TIMEOUT: int = int(os.getenv("STREAMING_TIMEOUT", "300"))  # Timeout in seconds for streaming responses
+
+    # Gupshup WhatsApp API Configuration
+    GUPSHUP_API_KEY: str = os.getenv("GUPSHUP_API_KEY", "")
+    GUPSHUP_BASE_URL: str = os.getenv("GUPSHUP_BASE_URL", "")
+    GUPSHUP_APP_NAME: str = os.getenv("GUPSHUP_APP_NAME", "RetelloWA")
+    GUPSHUP_APP_ID: str = os.getenv("GUPSHUP_APP_ID", "")
+    GUPSHUP_WABA_ID: str = os.getenv("GUPSHUP_WABA_ID", "")
+    # Updated with actual WhatsApp Business phone number
+    GUPSHUP_SOURCE_PHONE: str = os.getenv("GUPSHUP_SOURCE_PHONE", "")  # Your WhatsApp Business number
+    
+    # Gupshup Authentication Template ID (from curl command)
+    GUPSHUP_AUTH_TEMPLATE_ID: str = os.getenv("GUPSHUP_AUTH_TEMPLATE_ID", "")
+    
+    # OTP Configuration
+    OTP_EXPIRY_MINUTES: int = int(os.getenv("OTP_EXPIRY_MINUTES", "5"))
+    OTP_MAX_ATTEMPTS: int = int(os.getenv("OTP_MAX_ATTEMPTS", "5"))
+    OTP_RATE_LIMIT_PER_HOUR: int = int(os.getenv("OTP_RATE_LIMIT_PER_HOUR", "10"))  # Increased for testing
+    OTP_LENGTH: int = int(os.getenv("OTP_LENGTH", "6"))
+    
+    # Gupshup Limits (from dashboard)
+    GUPSHUP_DAILY_LIMIT: int = int(os.getenv("GUPSHUP_DAILY_LIMIT", "250"))  # 250 customers/24 hrs
 
     # CORS
     BACKEND_CORS_ORIGINS: list = [
