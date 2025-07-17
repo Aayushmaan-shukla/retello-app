@@ -21,7 +21,6 @@ class Chat(ChatBase):
     updated_at: datetime
     button_text: Optional[str] = None
     why_this_phone: List[str] = []
-    has_more: bool = False
 
     @field_validator('why_this_phone', mode='before')
     @classmethod

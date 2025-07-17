@@ -117,6 +117,23 @@ def migrate_db():
             
             logger.info("Successfully added has_more column to chats table (existing data preserved)")
 
+        # Check if the auth_method column exists in users table
+        result = connection.execute(text("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name='users' AND column_name='auth_method';
+        """))
+        auth_method_exists = result.fetchone() is not None
+
+        if not auth_method_exists:
+            # Add auth_method column if it doesn't exist
+            connection.execute(text("""
+                ALTER TABLE users 
+                ADD COLUMN IF NOT EXISTS auth_method VARCHAR DEFAULT 'otp';
+            """))
+            
+            logger.info("Successfully added auth_method column to users table")
+
         connection.commit()
 
 if __name__ == "__main__":
