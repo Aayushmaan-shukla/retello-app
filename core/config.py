@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     
     # Get-more-phones microservice URL (defaults to same base as MICRO_URL)
     GET_MORE_PHONES_URL: str = os.getenv("GET_MORE_PHONES_URL", "https://api-microretello.enpointe.io/get-more-phones")
+    
+    # Compare-phones microservice URL (defaults to same base as MICRO_URL)
+    COMPARE_PHONES_URL: str = os.getenv("COMPARE_PHONES_URL", "https://api-microretello.enpointe.io/compare-phones")
 
     # [NEW] Added on 2024-03-21: Streaming-related settings
     STREAMING_CHUNK_SIZE: int = int(os.getenv("STREAMING_CHUNK_SIZE", "1024"))  # Size of each chunk in bytes
