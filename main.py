@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
-from app.api.v1 import auth, user, session, chat, chat_name, otp_auth, gupshup_test
+from app.api.v1 import auth, user, session, chat, chat_name
 from app.core.logging_config import setup_logging
 import logging
 
