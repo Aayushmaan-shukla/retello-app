@@ -12,7 +12,7 @@ Base = declarative_base()
 from app.models.user import User
 from app.models.session import Session
 from app.models.chat import Chat
-from app.models.otp_verification import OTPVerification
+#from app.models.otp_verification import OTPVerification
 
 # Dependency
 def get_db():
