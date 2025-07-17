@@ -883,60 +883,73 @@ async def compare_phones(
         
         logger.info(f"Calling compare-phones microservice for {len(phones_data)} phones, user: {current_user.id}")
         
-        # Call external microservice (same pattern as /why-this-phone endpoint)
-        microservice_url = settings.COMPARE_PHONES_URL
+        # Generate comparison using existing why-this-phone logic for each phone
+        phone_explanations = []
         
         async with httpx.AsyncClient() as client:
-            try:
-                response = await client.post(
-                    microservice_url,
-                    json=payload,
-                    timeout=30.0  # Non-streaming, so shorter timeout
-                )
-                response.raise_for_status()
-                
-                result = response.json()
-                
-                # Extract the comparison from microservice response
-                comparison = result.get("comparison", "")
-                
-                if not comparison:
-                    raise HTTPException(status_code=500, detail="Empty response from microservice")
-                
-                logger.info(f"Successfully generated phone comparison for {len(phones_data)} phones")
-                
-                # Include metadata about the comparison
-                response_data = {
-                    "comparison": comparison,
-                    "phones_compared": len(phones_data),
-                    "phone_names": [phone.get("name", "Unknown") for phone in phones_data]
-                }
-                
-                # Include failed phones info if any
-                if failed_phones:
-                    response_data["failed_phones"] = failed_phones
-                    response_data["warning"] = f"Could not fetch data for {len(failed_phones)} phones"
-                
-                return response_data
-                
-            except httpx.HTTPStatusError as e:
-                logger.error(f"Microservice HTTP error: {e.response.status_code} - {e.response.text}")
-                raise HTTPException(
-                    status_code=502, 
-                    detail=f"External service error: {e.response.status_code}"
-                )
-            except httpx.RequestError as e:
-                logger.error(f"Microservice request error: {str(e)}")
-                raise HTTPException(
-                    status_code=503, 
-                    detail="Unable to connect to phone comparison service"
-                )
-            except json.JSONDecodeError as e:
-                logger.error(f"Invalid JSON response from microservice: {str(e)}")
-                raise HTTPException(
-                    status_code=502, 
-                    detail="Invalid response format from external service"
-                )
+            for phone in phones_data:
+                try:
+                    # Call the existing why-this-phone endpoint for each phone
+                    why_payload = {
+                        "chat_history": conversation,
+                        "phone": phone
+                    }
+                    
+                    response = await client.post(
+                        settings.WHY_THIS_PHONE_URL,
+                        json=why_payload,
+                        timeout=30.0
+                    )
+                    response.raise_for_status()
+                    
+                    result = response.json()
+                    why_explanation = result.get("why_this_phone", "")
+                    
+                    if why_explanation:
+                        phone_name = phone.get("name", "Unknown Phone")
+                        phone_explanations.append({
+                            "phone": phone_name,
+                            "explanation": why_explanation
+                        })
+                        logger.debug(f"Generated explanation for {phone_name}")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to generate explanation for phone {phone.get('name', 'Unknown')}: {str(e)}")
+                    continue
+        
+        # Format the comparison from individual explanations
+        if not phone_explanations:
+            raise HTTPException(status_code=500, detail="Could not generate comparison for any phones")
+        
+        # Create a formatted comparison
+        comparison_text = "## Phone Comparison\n\n"
+        comparison_text += "Based on your needs, here's how these phones compare:\n\n"
+        
+        for i, phone_exp in enumerate(phone_explanations, 1):
+            comparison_text += f"### {i}. {phone_exp['phone']}\n"
+            comparison_text += f"{phone_exp['explanation']}\n\n"
+        
+        # Add a summary if multiple phones
+        if len(phone_explanations) > 1:
+            comparison_text += "## Summary\n"
+            comparison_text += f"I've compared {len(phone_explanations)} phones based on your requirements. "
+            comparison_text += "Each phone has its strengths - choose based on your priorities and budget.\n"
+        
+        logger.info(f"Successfully generated comparison for {len(phone_explanations)} phones")
+        
+        # Include metadata about the comparison
+        response_data = {
+            "comparison": comparison_text,
+            "phones_compared": len(phone_explanations),
+            "phone_names": [exp["phone"] for exp in phone_explanations]
+        }
+        
+        # Include failed phones info if any
+        if failed_phones:
+            response_data["failed_phones"] = failed_phones
+            response_data["warning"] = f"Could not fetch data for {len(failed_phones)} phones"
+        
+        return response_data
                 
     except HTTPException:
         # Re-raise HTTP exceptions
