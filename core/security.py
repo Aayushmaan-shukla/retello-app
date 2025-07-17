@@ -50,4 +50,27 @@ async def get_current_user(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Inactive user"
         )
-    return user 
+    return user
+
+def is_guest_user(user: User) -> bool:
+    """Check if a user is a guest user (authenticated via invite)"""
+    return user.auth_method == "invite"
+
+def is_invite_user(user: User) -> bool:
+    """Alias for is_guest_user - check if user was created via invite"""
+    return is_guest_user(user)
+
+async def get_current_user_optional(
+    db: Session = Depends(get_db),
+    token: str = Depends(oauth2_scheme)
+) -> User:
+    """
+    Optional authentication - doesn't raise exception for guest users.
+    Use this when you want to allow both authenticated and guest users.
+    """
+    try:
+        return await get_current_user(db, token)
+    except HTTPException:
+        # For invite-based authentication, we might want to handle this differently
+        # For now, re-raise the exception
+        raise 

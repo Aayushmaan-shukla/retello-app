@@ -782,6 +782,106 @@ async def why_this_phone(
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
+@router.post("/compare")
+async def compare_phones(
+    request: dict,  # Accept any JSON structure
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Compare multiple phones based on user's needs and chat history.
+    Accepts any JSON structure - maximum flexibility for changing frontends.
+    """
+    try:
+        # Minimal validation - only check for essential data
+        phones = request.get("phones", [])
+        chat_history = request.get("chat_history", [])
+        
+        if not phones or not isinstance(phones, list):
+            raise HTTPException(status_code=400, detail="Phones list is required and must be a non-empty array")
+        
+        if len(phones) < 2:
+            raise HTTPException(status_code=400, detail="At least 2 phones are required for comparison")
+        
+        # Flexibly process chat history - handle any format
+        conversation = []
+        for message in chat_history:
+            if isinstance(message, dict):
+                # Handle multiple possible formats
+                content = (message.get("content") or 
+                          message.get("prompt") or 
+                          message.get("response") or 
+                          str(message))
+                
+                role = message.get("role", "user")  # Default to user
+                
+                conversation.append({
+                    "role": role,
+                    "content": content
+                })
+        
+        # Prepare payload - pass everything through, let microservice handle it
+        payload = {
+            "phones": phones,  # Pass raw phones data
+            "chat_history": conversation,
+            "request_type": "compare_phones",
+            "user_id": current_user.id,
+            # Include any additional fields from request
+            **{k: v for k, v in request.items() if k not in ["phones", "chat_history"]}
+        }
+        
+        phone_names = [phone.get("name", "Unknown") for phone in phones[:3]]  # Log first 3 phone names
+        logger.info(f"Calling compare-phones microservice for phones: {phone_names}, user: {current_user.id}")
+        
+        # Call external microservice (same pattern as /why-this-phone endpoint)
+        microservice_url = settings.COMPARE_PHONES_URL
+        
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(
+                    microservice_url,
+                    json=payload,
+                    timeout=30.0  # Non-streaming, so shorter timeout
+                )
+                response.raise_for_status()
+                
+                result = response.json()
+                
+                # Extract the comparison from microservice response
+                comparison = result.get("comparison", "")
+                
+                if not comparison:
+                    raise HTTPException(status_code=500, detail="Empty response from microservice")
+                
+                logger.info(f"Successfully generated phone comparison for {len(phones)} phones")
+                return {"comparison": comparison}
+                
+            except httpx.HTTPStatusError as e:
+                logger.error(f"Microservice HTTP error: {e.response.status_code} - {e.response.text}")
+                raise HTTPException(
+                    status_code=502, 
+                    detail=f"External service error: {e.response.status_code}"
+                )
+            except httpx.RequestError as e:
+                logger.error(f"Microservice request error: {str(e)}")
+                raise HTTPException(
+                    status_code=503, 
+                    detail="Unable to connect to phone comparison service"
+                )
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON response from microservice: {str(e)}")
+                raise HTTPException(
+                    status_code=502, 
+                    detail="Invalid response format from external service"
+                )
+                
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in compare-phones endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
 @router.post("/get-more-phones")
 async def get_more_phones(
     request: dict,
@@ -914,9 +1014,13 @@ async def get_more_phones(
                         ).order_by(Chat.created_at.desc()).first()
                     
                     if last_chat:
+                        logger.info(f"Found chat {last_chat.id} to update current_params")
+                        logger.debug(f"Current current_params before update: {last_chat.current_params}")
+                        
                         # Ensure current_params is not None before updating
                         if last_chat.current_params is None:
                             last_chat.current_params = {}
+                            logger.info(f"Initialized empty current_params for chat {last_chat.id}")
                             
                         # Update current_params in database
                         last_chat.current_params = updated_current_params
@@ -927,19 +1031,40 @@ async def get_more_phones(
                         # Update updated_at timestamp
                         last_chat.updated_at = datetime.utcnow()
                         
+                        logger.info(f"About to update chat {last_chat.id} with:")
+                        logger.info(f"  - current_params: {updated_current_params}")
+                        logger.info(f"  - has_more: {result.get('has_more', False)}")
+                        
                         db.add(last_chat)
                         db.commit()
                         
-                        logger.info(f"Updated last chat {last_chat.id} with new current_params and has_more={result.get('has_more', False)}")
-                        logger.debug(f"Updated current_params: {updated_current_params}")
+                        logger.info(f"✅ Successfully updated chat {last_chat.id} with new current_params and has_more={result.get('has_more', False)}")
+                        
+                        # Verify the update worked
+                        verified_chat = db.query(Chat).filter(Chat.id == last_chat.id).first()
+                        logger.info(f"✅ Verified current_params in DB: {verified_chat.current_params}")
+                        logger.info(f"✅ Verified has_more in DB: {verified_chat.has_more}")
+                        
                     else:
-                        logger.warning(f"No previous chat found for user {current_user.id} to update current_params")
+                        logger.warning(f"❌ No previous chat found for user {current_user.id} to update current_params")
                         
                 except Exception as db_error:
-                    logger.error(f"Error updating database with new current_params: {str(db_error)}")
+                    logger.error(f"❌ CRITICAL: Error updating database with new current_params: {str(db_error)}")
+                    logger.error(f"❌ Error type: {type(db_error)}")
+                    logger.error(f"❌ Error args: {db_error.args}")
+                    import traceback
+                    logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+                    
                     db.rollback()  # Rollback on error
-                    # Don't fail the request if database update fails
-                    pass
+                    
+                    # Return the error information in the response for debugging
+                    if 'debug_info' not in result:
+                        result['debug_info'] = {}
+                    result['debug_info']['db_update_error'] = str(db_error)
+                    result['debug_info']['db_update_failed'] = True
+                    
+                    # Don't fail the request if database update fails, but make it obvious
+                    logger.warning("⚠️  Continuing with response despite database update failure")
                 
                 # Add metadata structure that frontend expects
                 if 'metadata' not in result:
