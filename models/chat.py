@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, ForeignKey, DateTime, func, JSON
+from sqlalchemy import Column, String, ForeignKey, DateTime, func, JSON, Boolean
 from sqlalchemy.orm import relationship
 from app.db.base import Base
 
@@ -14,6 +14,7 @@ class Chat(Base):
     current_params = Column(JSON)
     button_text = Column(String, nullable=True)
     why_this_phone = Column(JSON, default=list)
+    has_more = Column(Boolean, default=False, nullable=False)  # New field for has_more flag
     
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     created_at = Column(DateTime, default=func.now())

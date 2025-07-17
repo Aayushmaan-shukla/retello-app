@@ -340,6 +340,15 @@ async def stream_response(response: httpx.Response, db: Session, chat_id: str):
                                     chat.button_text = metadata_content.get('button_text', chat.button_text)
                                 if 'why_this_phone' in metadata_content:
                                     chat.why_this_phone = metadata_content['why_this_phone']
+                                
+                                # Add has_more flag to current_params for frontend compatibility
+                                if 'has_more' in metadata_content:
+                                    if not chat.current_params:
+                                        chat.current_params = {}
+                                    chat.current_params['has_more'] = metadata_content['has_more']
+                                    # Also store has_more as a separate field for easier querying
+                                    chat.has_more = metadata_content['has_more']
+                                
                                 # Add other metadata fields as needed e.g.
                                 # if 'query_type' in metadata_content: chat.query_type = metadata_content['query_type']
                                 db.add(chat)
@@ -430,10 +439,23 @@ async def stream_response_wrapper(url: str, json_payload: dict, db: Session, cha
             await handle_streaming_error(db, chat_id, e_http_status)
             error_content = f'External service error: {e_http_status.response.status_code}'
             try: # Try to get more details from response if JSON
-                error_details = e_http_status.response.json()
-                error_content += f" - {json.dumps(error_details)}"
-            except json.JSONDecodeError:
-                error_content += f" - {e_http_status.response.text[:200]}" # First 200 chars of text response
+                # For streaming responses, we need to read the content first
+                if hasattr(e_http_status.response, 'is_closed') and not e_http_status.response.is_closed:
+                    # This is a streaming response that hasn't been read yet
+                    response_content = await e_http_status.response.aread()
+                    response_text = response_content.decode('utf-8')
+                    try:
+                        error_details = json.loads(response_text)
+                        error_content += f" - {json.dumps(error_details)}"
+                    except json.JSONDecodeError:
+                        error_content += f" - {response_text[:200]}"
+                else:
+                    # Regular response, use existing logic
+                    error_details = e_http_status.response.json()
+                    error_content += f" - {json.dumps(error_details)}"
+            except Exception as parse_error:
+                logger.error(f"Error parsing response details: {parse_error}")
+                error_content += " - Could not parse error details"
 
             yield f"data: {json.dumps({'type': 'error', 'content': error_content})}\n\n"
         except httpx.RequestError as e_request: # Covers network errors, DNS failures, timeouts before response, etc.
@@ -603,6 +625,7 @@ async def create_chat(
             current_params={},
             button_text="See more", # Default value
             why_this_phone=[],
+            has_more=False,  # Default value for has_more
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow()
         )
@@ -759,31 +782,141 @@ async def why_this_phone(
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
-@router.post("/get-more-phones")
-async def get_more_phones(
-    request: dict,
+@router.post("/compare")
+async def compare_phones(
+    request: dict,  # Accept any JSON structure
     current_user: User = Depends(get_current_user)
 ):
     """
+    Compare multiple phones based on user's needs and chat history.
+    Accepts any JSON structure - maximum flexibility for changing frontends.
+    """
+    try:
+        # Minimal validation - only check for essential data
+        phones = request.get("phones", [])
+        chat_history = request.get("chat_history", [])
+        
+        if not phones or not isinstance(phones, list):
+            raise HTTPException(status_code=400, detail="Phones list is required and must be a non-empty array")
+        
+        if len(phones) < 2:
+            raise HTTPException(status_code=400, detail="At least 2 phones are required for comparison")
+        
+        # Flexibly process chat history - handle any format
+        conversation = []
+        for message in chat_history:
+            if isinstance(message, dict):
+                # Handle multiple possible formats
+                content = (message.get("content") or 
+                          message.get("prompt") or 
+                          message.get("response") or 
+                          str(message))
+                
+                role = message.get("role", "user")  # Default to user
+                
+                conversation.append({
+                    "role": role,
+                    "content": content
+                })
+        
+        # Prepare payload - pass everything through, let microservice handle it
+        payload = {
+            "phones": phones,  # Pass raw phones data
+            "chat_history": conversation,
+            "request_type": "compare_phones",
+            "user_id": current_user.id,
+            # Include any additional fields from request
+            **{k: v for k, v in request.items() if k not in ["phones", "chat_history"]}
+        }
+        
+        phone_names = [phone.get("name", "Unknown") for phone in phones[:3]]  # Log first 3 phone names
+        logger.info(f"Calling compare-phones microservice for phones: {phone_names}, user: {current_user.id}")
+        
+        # Call external microservice (same pattern as /why-this-phone endpoint)
+        microservice_url = settings.COMPARE_PHONES_URL
+        
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(
+                    microservice_url,
+                    json=payload,
+                    timeout=30.0  # Non-streaming, so shorter timeout
+                )
+                response.raise_for_status()
+                
+                result = response.json()
+                
+                # Extract the comparison from microservice response
+                comparison = result.get("comparison", "")
+                
+                if not comparison:
+                    raise HTTPException(status_code=500, detail="Empty response from microservice")
+                
+                logger.info(f"Successfully generated phone comparison for {len(phones)} phones")
+                return {"comparison": comparison}
+                
+            except httpx.HTTPStatusError as e:
+                logger.error(f"Microservice HTTP error: {e.response.status_code} - {e.response.text}")
+                raise HTTPException(
+                    status_code=502, 
+                    detail=f"External service error: {e.response.status_code}"
+                )
+            except httpx.RequestError as e:
+                logger.error(f"Microservice request error: {str(e)}")
+                raise HTTPException(
+                    status_code=503, 
+                    detail="Unable to connect to phone comparison service"
+                )
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON response from microservice: {str(e)}")
+                raise HTTPException(
+                    status_code=502, 
+                    detail="Invalid response format from external service"
+                )
+                
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in compare-phones endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.post("/get-more-phones")
+async def get_more_phones(
+    request: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
     Fetch more phones from database with pagination support.
-    Similar to the existing UI endpoint but integrated with the main API.
     
-    Expected request format:
+    Expected request format from frontend:
     {
+        "current_params": {...},  // Current parameters from the conversation
+        "intent_type": str,       // Intent type for the request
         "fetch_type": "flagships" | "budget_ranges" | "params_based",
-        "params": {...},  // Optional parameters for filtering
-        "phone_names": [...],  // Optional phone names for specific queries
-        "request_id": "uuid"  // Optional request ID for tracking
+        "params": {...},          // Optional additional parameters for filtering
+        "phone_names": [...],     // Optional phone names for specific queries
+        "request_id": "uuid"      // Optional request ID for tracking
     }
     """
     try:
         # Extract parameters from request
+        current_params = request.get('current_params')
+        intent_type = request.get('intent_type')
         fetch_type = request.get('fetch_type')
         params = request.get('params', None)
         phone_names = request.get('phone_names', None)
         request_id = request.get('request_id', None)
         
-        # Validate fetch_type
+        # Handle backward compatibility - if current_params is not provided, 
+        # check if the parameters are directly in the request
+        if not current_params and params:
+            current_params = params
+            logger.info("Using 'params' as 'current_params' for backward compatibility")
+        
+        # Validate fetch_type (required)
         allowed_fetch_types = ['flagships', 'budget_ranges', 'params_based']
         if not fetch_type:
             raise HTTPException(
@@ -801,22 +934,30 @@ async def get_more_phones(
         if not request_id:
             request_id = str(uuid.uuid4())
         
-        logger.info(f"Calling get-more-phones for fetch_type: {fetch_type}, user: {current_user.id}")
+        # Set default intent_type if not provided
+        if not intent_type:
+            intent_type = "general_search"
+            logger.info("Using default intent_type: general_search")
         
-        # Prepare payload for external microservice (same as used in retello/ui/app.py)
+        logger.info(f"Calling get-more-phones for fetch_type: {fetch_type}, intent_type: {intent_type}, user: {current_user.id}")
+        logger.info(f"Current params structure: {current_params}")
+        
+        # Prepare payload for external microservice
+        # Send the structure that the microservice expects
         payload = {
             "fetch_type": fetch_type,
-            "params": params,
+            "params": current_params or {},  # Use current_params as the main params
             "phone_names": phone_names,
-            "request_id": request_id
+            "request_id": request_id,
+            "intent_type": intent_type
         }
         
         # Call the external microservice endpoint
-        # This calls the get-more-phones microservice which implements the phone fetching logic
-        
         async with httpx.AsyncClient(timeout=30.0) as client:
-            # Use the configured microservice URL
             microservice_url = settings.GET_MORE_PHONES_URL
+            
+            logger.info(f"Sending request to microservice: {microservice_url}")
+            logger.info(f"Payload being sent: {json.dumps(payload, indent=2)}")
             
             response = await client.post(
                 microservice_url,
@@ -824,19 +965,128 @@ async def get_more_phones(
                 headers={"Content-Type": "application/json"}
             )
             
+            logger.info(f"Microservice response status: {response.status_code}")
+            
             if response.status_code != 200:
-                logger.error(f"Microservice returned error: {response.status_code} - {response.text}")
+                logger.error(f"Microservice returned error: {response.status_code}")
+                logger.error(f"Response text: {response.text}")
+                logger.error(f"Response headers: {dict(response.headers)}")
                 raise HTTPException(
                     status_code=response.status_code,
                     detail=f"Microservice error: {response.text}"
                 )
             
-            result = response.json()
-            
-            logger.info(f"Successfully fetched {result.get('total_fetched', 0)} phones for fetch_type: {fetch_type}")
-            
-            # Return the result directly
-            return result
+            try:
+                result = response.json()
+                logger.info(f"Successfully fetched {result.get('total_fetched', 0)} phones for fetch_type: {fetch_type}")
+                
+                # Ensure the response includes has_more flag for frontend compatibility
+                if 'has_more' not in result:
+                    # If microservice doesn't provide has_more, determine it based on results
+                    phones_count = len(result.get('phones', []))
+                    total_fetched = result.get('total_fetched', phones_count)
+                    result['has_more'] = total_fetched > 0  # Default logic
+                
+                # Update current_params with any new information from microservice response
+                updated_current_params = current_params.copy() if current_params else {}
+                
+                # If microservice returns updated params, merge them
+                if 'current_params' in result:
+                    updated_current_params.update(result['current_params'])
+                    logger.info(f"Merged updated current_params from microservice")
+                
+                # Always update has_more in current_params
+                updated_current_params['has_more'] = result.get('has_more', False)
+                
+                # Update the last chat in the database with new current_params and has_more
+                try:
+                    # Find the most recent chat for this user that has current_params
+                    # This ensures we update the chat that likely triggered the "get more" request
+                    last_chat = db.query(Chat).filter(
+                        Chat.user_id == current_user.id,
+                        Chat.current_params.isnot(None)
+                    ).order_by(Chat.created_at.desc()).first()
+                    
+                    # If no chat with current_params found, fall back to most recent chat
+                    if not last_chat:
+                        last_chat = db.query(Chat).filter(
+                            Chat.user_id == current_user.id
+                        ).order_by(Chat.created_at.desc()).first()
+                    
+                    if last_chat:
+                        logger.info(f"Found chat {last_chat.id} to update current_params")
+                        logger.debug(f"Current current_params before update: {last_chat.current_params}")
+                        
+                        # Ensure current_params is not None before updating
+                        if last_chat.current_params is None:
+                            last_chat.current_params = {}
+                            logger.info(f"Initialized empty current_params for chat {last_chat.id}")
+                            
+                        # Update current_params in database
+                        last_chat.current_params = updated_current_params
+                        
+                        # Update has_more field in database
+                        last_chat.has_more = result.get('has_more', False)
+                        
+                        # Update updated_at timestamp
+                        last_chat.updated_at = datetime.utcnow()
+                        
+                        logger.info(f"About to update chat {last_chat.id} with:")
+                        logger.info(f"  - current_params: {updated_current_params}")
+                        logger.info(f"  - has_more: {result.get('has_more', False)}")
+                        
+                        db.add(last_chat)
+                        db.commit()
+                        
+                        logger.info(f"✅ Successfully updated chat {last_chat.id} with new current_params and has_more={result.get('has_more', False)}")
+                        
+                        # Verify the update worked
+                        verified_chat = db.query(Chat).filter(Chat.id == last_chat.id).first()
+                        logger.info(f"✅ Verified current_params in DB: {verified_chat.current_params}")
+                        logger.info(f"✅ Verified has_more in DB: {verified_chat.has_more}")
+                        
+                    else:
+                        logger.warning(f"❌ No previous chat found for user {current_user.id} to update current_params")
+                        
+                except Exception as db_error:
+                    logger.error(f"❌ CRITICAL: Error updating database with new current_params: {str(db_error)}")
+                    logger.error(f"❌ Error type: {type(db_error)}")
+                    logger.error(f"❌ Error args: {db_error.args}")
+                    import traceback
+                    logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+                    
+                    db.rollback()  # Rollback on error
+                    
+                    # Return the error information in the response for debugging
+                    if 'debug_info' not in result:
+                        result['debug_info'] = {}
+                    result['debug_info']['db_update_error'] = str(db_error)
+                    result['debug_info']['db_update_failed'] = True
+                    
+                    # Don't fail the request if database update fails, but make it obvious
+                    logger.warning("⚠️  Continuing with response despite database update failure")
+                
+                # Add metadata structure that frontend expects
+                if 'metadata' not in result:
+                    result['metadata'] = {
+                        'total_results': result.get('total_fetched', 0),
+                        'has_more': result.get('has_more', False),
+                        'current_params': updated_current_params,  # Use updated params
+                        'fetch_type': fetch_type,
+                        'intent_type': intent_type
+                    }
+                else:
+                    # Update existing metadata with current_params
+                    result['metadata']['current_params'] = updated_current_params
+                
+                return result
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse microservice response as JSON: {e}")
+                logger.error(f"Response text: {response.text}")
+                raise HTTPException(
+                    status_code=502,
+                    detail="Invalid JSON response from microservice"
+                )
             
     except HTTPException:
         # Re-raise HTTP exceptions
@@ -1003,6 +1253,7 @@ async def continue_chat(
         current_params={},
         button_text="See more", # Default value
         why_this_phone=[],
+        has_more=False,  # Default value for has_more
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow()
     )

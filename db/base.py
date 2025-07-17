@@ -8,6 +8,13 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
 
+# Import models to ensure they're registered with SQLAlchemy
+from app.models.user import User
+from app.models.session import Session
+from app.models.chat import Chat
+from app.models.otp_verification import OTPVerification
+from app.models.invite import Invite
+
 # Dependency
 def get_db():
     db = SessionLocal()
