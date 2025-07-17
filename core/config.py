@@ -35,11 +35,10 @@ class Settings(BaseSettings):
     WHY_THIS_PHONE_URL: str = os.getenv("WHY_THIS_PHONE_URL", "https://api-microretello.enpointe.io/why-this-phone")
     
     # Get-more-phones microservice URL (defaults to same base as MICRO_URL)
-    GET_MORE_PHONES_URL: str = os.getenv("GET_MORE_PHONES_URL", "https://api-microretello.enpointe.io/get-more-phones")
+    GET_MORE_PHONES_URL: str = os.getenv("GET_MORE_PHONES_URL", "https://api-uat-microretello.enpointe.io/get-more-phones")
     
     # Compare-phones microservice URL (defaults to same base as MICRO_URL)
-    COMPARE_PHONES_URL: str = os.getenv("COMPARE_PHONES_URL", "https://api-microretello.enpointe.io/compare-phones")
-
+    COMPARE_PHONES_URL: str = os.getenv("COMPARE_PHONES_URL", "https://api-uat-microretello.enpointe.io/compare-phones")
     # [NEW] Added on 2024-03-21: Streaming-related settings
     STREAMING_CHUNK_SIZE: int = int(os.getenv("STREAMING_CHUNK_SIZE", "1024"))  # Size of each chunk in bytes
     STREAMING_TIMEOUT: int = int(os.getenv("STREAMING_TIMEOUT", "300"))  # Timeout in seconds for streaming responses
