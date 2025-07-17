@@ -979,6 +979,10 @@ async def get_more_phones(
     }
     """
     try:
+        # 🔍 LOG 1: Log the entire incoming request
+        logger.info(f"🔍 GET-MORE-PHONES REQUEST START - User: {current_user.id}")
+        logger.info(f"🔍 Full incoming request: {json.dumps(request, indent=2)}")
+        
         # Extract parameters from request
         current_params = request.get('current_params')
         intent_type = request.get('intent_type')
@@ -987,11 +991,23 @@ async def get_more_phones(
         phone_names = request.get('phone_names', None)
         request_id = request.get('request_id', None)
         
+        # 🔍 LOG 2: Log extracted parameters
+        logger.info(f"🔍 EXTRACTED PARAMS:")
+        logger.info(f"  - current_params: {current_params}")
+        logger.info(f"  - intent_type: {intent_type}")
+        logger.info(f"  - fetch_type: {fetch_type}")
+        logger.info(f"  - params: {params}")
+        logger.info(f"  - phone_names: {phone_names}")
+        logger.info(f"  - request_id: {request_id}")
+        
         # Handle backward compatibility - if current_params is not provided, 
         # check if the parameters are directly in the request
         if not current_params and params:
             current_params = params
-            logger.info("Using 'params' as 'current_params' for backward compatibility")
+            logger.info("🔍 BACKWARD COMPATIBILITY: Using 'params' as 'current_params'")
+        
+        # 🔍 LOG 3: Log current_params after backward compatibility
+        logger.info(f"🔍 FINAL current_params after compatibility check: {current_params}")
         
         # Validate fetch_type (required)
         allowed_fetch_types = ['flagships', 'budget_ranges', 'params_based']
@@ -1010,14 +1026,27 @@ async def get_more_phones(
         # Generate request_id if not provided
         if not request_id:
             request_id = str(uuid.uuid4())
+            logger.info(f"🔍 Generated new request_id: {request_id}")
         
         # Set default intent_type if not provided
         if not intent_type:
             intent_type = "general_search"
-            logger.info("Using default intent_type: general_search")
+            logger.info("🔍 Using default intent_type: general_search")
         
-        logger.info(f"Calling get-more-phones for fetch_type: {fetch_type}, intent_type: {intent_type}, user: {current_user.id}")
-        logger.info(f"Current params structure: {current_params}")
+        logger.info(f"🔍 PROCESSING: fetch_type={fetch_type}, intent_type={intent_type}, user={current_user.id}")
+        
+        # 🔍 LOG 4: Check current chat state BEFORE microservice call
+        logger.info(f"🔍 CHECKING DATABASE STATE BEFORE MICROSERVICE CALL:")
+        last_chat_before = db.query(Chat).filter(
+            Chat.user_id == current_user.id
+        ).order_by(Chat.created_at.desc()).first()
+        
+        if last_chat_before:
+            logger.info(f"🔍 BEFORE CALL - Last chat ID: {last_chat_before.id}")
+            logger.info(f"🔍 BEFORE CALL - Current DB current_params: {last_chat_before.current_params}")
+            logger.info(f"🔍 BEFORE CALL - Current DB has_more: {last_chat_before.has_more}")
+        else:
+            logger.info("🔍 BEFORE CALL - No previous chat found")
         
         # Prepare payload for external microservice
         # Send the structure that the microservice expects
@@ -1029,12 +1058,14 @@ async def get_more_phones(
             "intent_type": intent_type
         }
         
+        # 🔍 LOG 5: Log payload being sent to microservice
+        logger.info(f"🔍 MICROSERVICE PAYLOAD:")
+        logger.info(f"🔍 Microservice URL: {settings.GET_MORE_PHONES_URL}")
+        logger.info(f"🔍 Payload: {json.dumps(payload, indent=2)}")
+        
         # Call the external microservice endpoint
         async with httpx.AsyncClient(timeout=30.0) as client:
             microservice_url = settings.GET_MORE_PHONES_URL
-            
-            logger.info(f"Sending request to microservice: {microservice_url}")
-            logger.info(f"Payload being sent: {json.dumps(payload, indent=2)}")
             
             response = await client.post(
                 microservice_url,
@@ -1042,12 +1073,12 @@ async def get_more_phones(
                 headers={"Content-Type": "application/json"}
             )
             
-            logger.info(f"Microservice response status: {response.status_code}")
+            logger.info(f"🔍 MICROSERVICE RESPONSE STATUS: {response.status_code}")
             
             if response.status_code != 200:
-                logger.error(f"Microservice returned error: {response.status_code}")
-                logger.error(f"Response text: {response.text}")
-                logger.error(f"Response headers: {dict(response.headers)}")
+                logger.error(f"🔍 MICROSERVICE ERROR: {response.status_code}")
+                logger.error(f"🔍 Response text: {response.text}")
+                logger.error(f"🔍 Response headers: {dict(response.headers)}")
                 raise HTTPException(
                     status_code=response.status_code,
                     detail=f"Microservice error: {response.text}"
@@ -1055,7 +1086,19 @@ async def get_more_phones(
             
             try:
                 result = response.json()
-                logger.info(f"Successfully fetched {result.get('total_fetched', 0)} phones for fetch_type: {fetch_type}")
+                
+                # 🔍 LOG 6: Log microservice response 
+                logger.info(f"🔍 MICROSERVICE RESPONSE SUCCESS:")
+                logger.info(f"🔍 Response keys: {list(result.keys())}")
+                logger.info(f"🔍 Total fetched: {result.get('total_fetched', 0)}")
+                logger.info(f"🔍 Has more from microservice: {result.get('has_more', 'NOT_PROVIDED')}")
+                logger.info(f"🔍 Phones count: {len(result.get('phones', []))}")
+                
+                # Log current_params from microservice if present
+                if 'current_params' in result:
+                    logger.info(f"🔍 Microservice returned current_params: {result['current_params']}")
+                else:
+                    logger.info("🔍 Microservice did NOT return current_params")
                 
                 # Ensure the response includes has_more flag for frontend compatibility
                 if 'has_more' not in result:
@@ -1063,17 +1106,30 @@ async def get_more_phones(
                     phones_count = len(result.get('phones', []))
                     total_fetched = result.get('total_fetched', phones_count)
                     result['has_more'] = total_fetched > 0  # Default logic
+                    logger.info(f"🔍 Set default has_more to: {result['has_more']}")
+                
+                # 🔍 LOG 7: Track current_params update process
+                logger.info(f"🔍 CURRENT_PARAMS UPDATE PROCESS:")
+                logger.info(f"🔍 Original current_params: {current_params}")
                 
                 # Update current_params with any new information from microservice response
                 updated_current_params = current_params.copy() if current_params else {}
+                logger.info(f"🔍 Initial updated_current_params: {updated_current_params}")
                 
                 # If microservice returns updated params, merge them
                 if 'current_params' in result:
+                    logger.info(f"🔍 MERGING microservice current_params: {result['current_params']}")
                     updated_current_params.update(result['current_params'])
-                    logger.info(f"Merged updated current_params from microservice")
+                    logger.info(f"🔍 After merge: {updated_current_params}")
+                else:
+                    logger.info("🔍 No current_params from microservice to merge")
                 
                 # Always update has_more in current_params
                 updated_current_params['has_more'] = result.get('has_more', False)
+                logger.info(f"🔍 Added has_more to current_params: {updated_current_params}")
+                
+                # 🔍 LOG 8: Database update process
+                logger.info(f"🔍 DATABASE UPDATE PROCESS START:")
                 
                 # Update the last chat in the database with new current_params and has_more
                 try:
@@ -1086,18 +1142,20 @@ async def get_more_phones(
                     
                     # If no chat with current_params found, fall back to most recent chat
                     if not last_chat:
+                        logger.info("🔍 No chat with current_params found, trying most recent chat")
                         last_chat = db.query(Chat).filter(
                             Chat.user_id == current_user.id
                         ).order_by(Chat.created_at.desc()).first()
                     
                     if last_chat:
-                        logger.info(f"Found chat {last_chat.id} to update current_params")
-                        logger.debug(f"Current current_params before update: {last_chat.current_params}")
+                        logger.info(f"🔍 Found chat to update: {last_chat.id}")
+                        logger.info(f"🔍 Chat current_params BEFORE update: {last_chat.current_params}")
+                        logger.info(f"🔍 Chat has_more BEFORE update: {last_chat.has_more}")
                         
                         # Ensure current_params is not None before updating
                         if last_chat.current_params is None:
                             last_chat.current_params = {}
-                            logger.info(f"Initialized empty current_params for chat {last_chat.id}")
+                            logger.info(f"🔍 Initialized empty current_params for chat {last_chat.id}")
                             
                         # Update current_params in database
                         last_chat.current_params = updated_current_params
@@ -1108,29 +1166,32 @@ async def get_more_phones(
                         # Update updated_at timestamp
                         last_chat.updated_at = datetime.utcnow()
                         
-                        logger.info(f"About to update chat {last_chat.id} with:")
-                        logger.info(f"  - current_params: {updated_current_params}")
-                        logger.info(f"  - has_more: {result.get('has_more', False)}")
+                        logger.info(f"🔍 ABOUT TO COMMIT DATABASE UPDATE:")
+                        logger.info(f"🔍   - Chat ID: {last_chat.id}")
+                        logger.info(f"🔍   - New current_params: {updated_current_params}")
+                        logger.info(f"🔍   - New has_more: {result.get('has_more', False)}")
+                        logger.info(f"🔍   - Updated timestamp: {last_chat.updated_at}")
                         
                         db.add(last_chat)
                         db.commit()
                         
-                        logger.info(f"✅ Successfully updated chat {last_chat.id} with new current_params and has_more={result.get('has_more', False)}")
+                        logger.info(f"🔍 ✅ DATABASE UPDATE COMMITTED for chat {last_chat.id}")
                         
                         # Verify the update worked
                         verified_chat = db.query(Chat).filter(Chat.id == last_chat.id).first()
-                        logger.info(f"✅ Verified current_params in DB: {verified_chat.current_params}")
-                        logger.info(f"✅ Verified has_more in DB: {verified_chat.has_more}")
+                        logger.info(f"🔍 ✅ VERIFICATION - current_params in DB: {verified_chat.current_params}")
+                        logger.info(f"🔍 ✅ VERIFICATION - has_more in DB: {verified_chat.has_more}")
+                        logger.info(f"🔍 ✅ VERIFICATION - updated_at in DB: {verified_chat.updated_at}")
                         
                     else:
-                        logger.warning(f"❌ No previous chat found for user {current_user.id} to update current_params")
+                        logger.error(f"🔍 ❌ NO CHAT FOUND for user {current_user.id} to update current_params")
                         
                 except Exception as db_error:
-                    logger.error(f"❌ CRITICAL: Error updating database with new current_params: {str(db_error)}")
-                    logger.error(f"❌ Error type: {type(db_error)}")
-                    logger.error(f"❌ Error args: {db_error.args}")
+                    logger.error(f"🔍 ❌ DATABASE UPDATE FAILED: {str(db_error)}")
+                    logger.error(f"🔍 ❌ Error type: {type(db_error)}")
+                    logger.error(f"🔍 ❌ Error args: {db_error.args}")
                     import traceback
-                    logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+                    logger.error(f"🔍 ❌ Full traceback: {traceback.format_exc()}")
                     
                     db.rollback()  # Rollback on error
                     
@@ -1141,7 +1202,7 @@ async def get_more_phones(
                     result['debug_info']['db_update_failed'] = True
                     
                     # Don't fail the request if database update fails, but make it obvious
-                    logger.warning("⚠️  Continuing with response despite database update failure")
+                    logger.warning("🔍 ⚠️  Continuing with response despite database update failure")
                 
                 # Add metadata structure that frontend expects
                 if 'metadata' not in result:
@@ -1152,14 +1213,38 @@ async def get_more_phones(
                         'fetch_type': fetch_type,
                         'intent_type': intent_type
                     }
+                    logger.info(f"🔍 Created new metadata: {result['metadata']}")
                 else:
                     # Update existing metadata with current_params
                     result['metadata']['current_params'] = updated_current_params
+                    logger.info(f"🔍 Updated existing metadata with current_params")
+                
+                # 🔍 LOG 9: Final response structure
+                logger.info(f"🔍 FINAL RESPONSE STRUCTURE:")
+                logger.info(f"🔍 Response keys: {list(result.keys())}")
+                logger.info(f"🔍 Metadata: {result.get('metadata', {})}")
+                logger.info(f"🔍 Total phones being returned: {len(result.get('phones', []))}")
+                logger.info(f"🔍 Has more in response: {result.get('has_more', False)}")
+                
+                # 🔍 LOG 10: Check database state AFTER everything
+                logger.info(f"🔍 FINAL DATABASE STATE CHECK:")
+                final_chat = db.query(Chat).filter(
+                    Chat.user_id == current_user.id
+                ).order_by(Chat.created_at.desc()).first()
+                
+                if final_chat:
+                    logger.info(f"🔍 FINAL - Chat ID: {final_chat.id}")
+                    logger.info(f"🔍 FINAL - Current DB current_params: {final_chat.current_params}")
+                    logger.info(f"🔍 FINAL - Current DB has_more: {final_chat.has_more}")
+                else:
+                    logger.info("🔍 FINAL - No chat found")
+                
+                logger.info(f"🔍 GET-MORE-PHONES REQUEST COMPLETED ✅")
                 
                 return result
             except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse microservice response as JSON: {e}")
-                logger.error(f"Response text: {response.text}")
+                logger.error(f"🔍 ❌ JSON DECODE ERROR: {e}")
+                logger.error(f"🔍 Response text: {response.text}")
                 raise HTTPException(
                     status_code=502,
                     detail="Invalid JSON response from microservice"
@@ -1169,7 +1254,9 @@ async def get_more_phones(
         # Re-raise HTTP exceptions
         raise
     except Exception as e:
-        logger.error(f"Unexpected error in get-more-phones endpoint: {str(e)}")
+        logger.error(f"🔍 ❌ UNEXPECTED ERROR in get-more-phones endpoint: {str(e)}")
+        import traceback
+        logger.error(f"🔍 ❌ Full traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @router.post("/{session_id}", response_model=None) # response_model=ChatSchema is misleading for StreamingResponse
