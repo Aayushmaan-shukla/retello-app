@@ -959,6 +959,162 @@ async def compare_phones(
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
+@router.get("/phones/search")
+async def search_phones(
+    q: str,
+    limit: int = 10,
+    threshold: int = 0,
+    method: str = "auto",
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Search for phones by name using fuzzy matching.
+    Returns a list of phone names that match the search query.
+    """
+    try:
+        logger.info(f"Searching phones with query: {q}, limit: {limit}, user: {current_user.id}")
+        
+        # Validate query length
+        if len(q.strip()) < 2:
+            raise HTTPException(
+                status_code=400,
+                detail="Search query must be at least 2 characters long"
+            )
+        
+        async with httpx.AsyncClient() as client:
+            try:
+                # Build query parameters
+                params = {
+                    "q": q.strip(),
+                    "limit": min(limit, 50),  # Cap at 50 results
+                    "threshold": max(0, min(threshold, 100)),  # 0-100 range
+                    "method": method.lower()
+                }
+                
+                # Call the existing /phones_search endpoint
+                search_url = f"{settings.RETELLO_UI_URL}/phones_search"
+                
+                logger.debug(f"Searching phones at: {search_url} with params: {params}")
+                
+                response = await client.get(search_url, params=params, timeout=10.0)
+                response.raise_for_status()
+                
+                search_results = response.json()
+                
+                logger.info(f"Phone search returned {search_results.get('count', 0)} results for query: {q}")
+                
+                # Return the search results in a consistent format
+                return {
+                    "query": q,
+                    "results": search_results.get("matches", []),
+                    "count": search_results.get("count", 0),
+                    "source": "retello_ui"
+                }
+                
+            except httpx.HTTPStatusError as e:
+                logger.error(f"HTTP error searching phones for query '{q}': {e.response.status_code}")
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"External service error: {e.response.status_code}"
+                )
+            except httpx.RequestError as e:
+                logger.error(f"Request error searching phones for query '{q}': {str(e)}")
+                raise HTTPException(
+                    status_code=503,
+                    detail="Unable to connect to phone search service"
+                )
+            except Exception as e:
+                logger.error(f"Unexpected error searching phones for query '{q}': {str(e)}")
+                raise HTTPException(
+                    status_code=500,
+                    detail="Error searching phones"
+                )
+                
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in search-phones endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.get("/phone/{phone_name}")
+async def get_phone_data(
+    phone_name: str,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get complete phone data by exact name.
+    Fetches detailed phone information from the existing phone data service.
+    """
+    try:
+        logger.info(f"Fetching phone data for: {phone_name}, user: {current_user.id}")
+        
+        # URL encode the phone name to handle special characters
+        encoded_phone_name = quote(phone_name, safe='')
+        
+        async with httpx.AsyncClient() as client:
+            try:
+                # Call the existing /phone/{phone_name} endpoint
+                phone_url = f"{settings.RETELLO_UI_URL}/phone/{encoded_phone_name}"
+                
+                logger.debug(f"Fetching phone data from: {phone_url}")
+                
+                response = await client.get(phone_url, timeout=10.0)
+                response.raise_for_status()
+                
+                phone_data = response.json()
+                
+                logger.info(f"Successfully fetched data for {phone_name}")
+                
+                # Return the phone data in a consistent format
+                if "data" in phone_data:
+                    return {
+                        "phone_name": phone_name,
+                        "data": phone_data["data"],
+                        "source": "retello_ui"
+                    }
+                else:
+                    # If no 'data' key, return the entire response
+                    return {
+                        "phone_name": phone_name,
+                        "data": phone_data,
+                        "source": "retello_ui"
+                    }
+                    
+            except httpx.HTTPStatusError as e:
+                logger.error(f"HTTP error fetching phone data for {phone_name}: {e.response.status_code}")
+                if e.response.status_code == 404:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Phone '{phone_name}' not found"
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"External service error: {e.response.status_code}"
+                    )
+            except httpx.RequestError as e:
+                logger.error(f"Request error fetching phone data for {phone_name}: {str(e)}")
+                raise HTTPException(
+                    status_code=503,
+                    detail="Unable to connect to phone data service"
+                )
+            except Exception as e:
+                logger.error(f"Unexpected error fetching phone data for {phone_name}: {str(e)}")
+                raise HTTPException(
+                    status_code=500,
+                    detail="Error fetching phone data"
+                )
+                
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in get-phone-data endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
 @router.post("/get-more-phones")
 async def get_more_phones(
     request: dict,
