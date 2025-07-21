@@ -11,7 +11,8 @@ from app.models.session import Session
 from app.models.chat import Chat
 from app.schemas.session import (
     SessionCreate, Session as SessionSchema, SessionUpdate,
-    SessionSearchResponse, SessionSearchResult, SessionSearchSession, SessionSearchChat
+    SessionSearchResponse, SessionSearchResult, SessionSearchSession, SessionSearchChat,
+    SessionRename, BulkDeleteSessionsRequest, BulkDeleteSessionsResponse
 )
 from app.api.v1.auth import get_current_user
 from app.models.user import User
@@ -62,6 +63,39 @@ async def update_session(
     session.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(session)
+    return session
+
+@router.put("/{session_id}/rename", response_model=SessionSchema)
+async def rename_session(
+    *,
+    db: Session = Depends(get_db),
+    session_id: str,
+    rename_request: SessionRename,
+    current_user: User = Depends(get_current_user)
+) -> Any:
+    """
+    Rename a session. Only accessible by the session owner.
+    This is a dedicated endpoint for renaming sessions with validation.
+    """
+    logger.info(f"Renaming session {session_id} to '{rename_request.name}' for user {current_user.id}")
+    
+    session = db.query(Session).filter(
+        Session.id == session_id,
+        Session.user_id == current_user.id
+    ).first()
+    
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    old_name = session.name
+    session.name = rename_request.name
+    session.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(session)
+    
+    logger.info(f"Successfully renamed session {session_id} from '{old_name}' to '{rename_request.name}'")
+    
     return session
 
 @router.get("", response_model=List[SessionSchema])
@@ -200,9 +234,70 @@ async def delete_session(
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     
+    logger.info(f"Deleting session {session_id} for user {current_user.id}")
+    
     db.delete(session)
     db.commit()
+    
+    logger.info(f"Successfully deleted session {session_id}")
+    
     return {"message": "Session deleted successfully"}
+
+@router.delete("/bulk", response_model=BulkDeleteSessionsResponse)
+async def bulk_delete_sessions(
+    *,
+    db: Session = Depends(get_db),
+    delete_request: BulkDeleteSessionsRequest,
+    current_user: User = Depends(get_current_user)
+) -> Any:
+    """
+    Delete multiple sessions at once. Only sessions owned by the current user can be deleted.
+    
+    Returns the number of successfully deleted sessions and any errors that occurred.
+    """
+    logger.info(f"Bulk deleting {len(delete_request.session_ids)} sessions for user {current_user.id}")
+    
+    deleted_count = 0
+    failed_ids = []
+    errors = []
+    
+    for session_id in delete_request.session_ids:
+        try:
+            session = db.query(Session).filter(
+                Session.id == session_id,
+                Session.user_id == current_user.id
+            ).first()
+            
+            if not session:
+                failed_ids.append(session_id)
+                errors.append(f"Session {session_id} not found or access denied")
+                continue
+                
+            db.delete(session)
+            deleted_count += 1
+            logger.debug(f"Marked session {session_id} for deletion")
+            
+        except Exception as e:
+            failed_ids.append(session_id)
+            errors.append(f"Error deleting session {session_id}: {str(e)}")
+            logger.error(f"Error deleting session {session_id}: {str(e)}")
+    
+    try:
+        db.commit()
+        logger.info(f"Successfully bulk deleted {deleted_count} sessions for user {current_user.id}")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to commit bulk delete transaction: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Failed to complete bulk delete operation: {str(e)}"
+        )
+    
+    return BulkDeleteSessionsResponse(
+        deleted_count=deleted_count,
+        failed_ids=failed_ids,
+        errors=errors
+    )
 
 @router.get("/user/sessions", response_model=List[SessionSchema])
 async def get_user_sessions(

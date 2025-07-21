@@ -13,6 +13,19 @@ class SessionCreate(SessionBase):
 class SessionUpdate(SessionBase):
     pass
 
+# New schema for session rename operations
+class SessionRename(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200, description="New session name")
+
+# New schema for bulk session delete operations
+class BulkDeleteSessionsRequest(BaseModel):
+    session_ids: List[str] = Field(..., min_items=1, max_items=50, description="List of session IDs to delete")
+
+class BulkDeleteSessionsResponse(BaseModel):
+    deleted_count: int = Field(..., description="Number of sessions successfully deleted")
+    failed_ids: List[str] = Field(default=[], description="Session IDs that failed to delete")
+    errors: List[str] = Field(default=[], description="Error messages for failed deletions")
+
 class Session(SessionBase):
     id: str
     user_id: str
