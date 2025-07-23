@@ -1301,6 +1301,23 @@ async def get_more_phones(
                     logger.info(f"🔍 Available top-level fields: {list(result.keys())}")
                     if 'metadata' in result:
                         logger.info(f"🔍 Available metadata fields: {list(result.get('metadata', {}).keys())}")
+                    
+                    # 🔍 LOG THE FULL MICROSERVICE RESPONSE FOR DEBUG
+                    logger.info("🔍 === FULL MICROSERVICE RESPONSE FOR DEBUG ===")
+                    logger.info(f"🔍 {json.dumps(result, indent=2, default=str)}")
+                    logger.info("🔍 === END FULL RESPONSE ===")
+                    
+                    # Check if there are any fields that might contain parameter updates
+                    logger.info("🔍 === CHECKING FOR PARAMETER CLUES ===")
+                    if result.get('multiplier_used'):
+                        logger.info(f"🔍 ⚠️  multiplier_used: {result['multiplier_used']} (should update query_multiplier)")
+                    if result.get('previous_limit'):
+                        logger.info(f"🔍 ⚠️  previous_limit: {result['previous_limit']} (might indicate limit changes)")
+                    if result.get('total_limit'):
+                        logger.info(f"🔍 ⚠️  total_limit: {result['total_limit']} (might indicate limit changes)")
+                    if result.get('flexible_applied'):
+                        logger.info(f"🔍 ⚠️  flexible_applied: {result['flexible_applied']} (might indicate param relaxation)")
+                    logger.info("🔍 === END PARAMETER CLUES ===")
                 
                 # Always update has_more in current_params
                 updated_current_params['has_more'] = result.get('has_more', False)
