@@ -1273,20 +1273,34 @@ async def get_more_phones(
                 logger.info(f"🔍 Initial updated_current_params: {updated_current_params}")
                 
                 # If microservice returns updated params, merge them
-                # NOTE: Microservice returns updated params in 'params' field, not 'current_params'
-                microservice_params = result.get('params') or result.get('current_params')
+                # NOTE: Microservice returns updated params in 'metadata.current_params'
+                microservice_params = None
+                source_location = ""
+                
+                # Check multiple possible locations for updated parameters
+                if result.get('metadata', {}).get('current_params'):
+                    microservice_params = result['metadata']['current_params']
+                    source_location = "metadata.current_params"
+                elif result.get('params'):
+                    microservice_params = result['params']
+                    source_location = "params"
+                elif result.get('current_params'):
+                    microservice_params = result['current_params']
+                    source_location = "current_params"
                 
                 if microservice_params:
+                    logger.info(f"🔍 ✅ FOUND microservice params in: {source_location}")
                     logger.info(f"🔍 MERGING microservice params: {microservice_params}")
-                    logger.info(f"🔍 Source field: {'params' if 'params' in result else 'current_params'}")
                     
                     # Replace current_params entirely with the updated params from microservice
                     # This ensures we get the updated query_multiplier, price_range, etc.
                     updated_current_params.update(microservice_params)
-                    logger.info(f"🔍 After merge: {updated_current_params}")
+                    logger.info(f"🔍 ✅ After merge: {updated_current_params}")
                 else:
-                    logger.info("🔍 No params or current_params from microservice to merge")
-                    logger.info(f"🔍 Available fields: {list(result.keys())}")
+                    logger.info("🔍 ❌ No params found in microservice response")
+                    logger.info(f"🔍 Available top-level fields: {list(result.keys())}")
+                    if 'metadata' in result:
+                        logger.info(f"🔍 Available metadata fields: {list(result.get('metadata', {}).keys())}")
                 
                 # Always update has_more in current_params
                 updated_current_params['has_more'] = result.get('has_more', False)
