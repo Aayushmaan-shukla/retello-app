@@ -1273,12 +1273,20 @@ async def get_more_phones(
                 logger.info(f"🔍 Initial updated_current_params: {updated_current_params}")
                 
                 # If microservice returns updated params, merge them
-                if 'current_params' in result:
-                    logger.info(f"🔍 MERGING microservice current_params: {result['current_params']}")
-                    updated_current_params.update(result['current_params'])
+                # NOTE: Microservice returns updated params in 'params' field, not 'current_params'
+                microservice_params = result.get('params') or result.get('current_params')
+                
+                if microservice_params:
+                    logger.info(f"🔍 MERGING microservice params: {microservice_params}")
+                    logger.info(f"🔍 Source field: {'params' if 'params' in result else 'current_params'}")
+                    
+                    # Replace current_params entirely with the updated params from microservice
+                    # This ensures we get the updated query_multiplier, price_range, etc.
+                    updated_current_params.update(microservice_params)
                     logger.info(f"🔍 After merge: {updated_current_params}")
                 else:
-                    logger.info("🔍 No current_params from microservice to merge")
+                    logger.info("🔍 No params or current_params from microservice to merge")
+                    logger.info(f"🔍 Available fields: {list(result.keys())}")
                 
                 # Always update has_more in current_params
                 updated_current_params['has_more'] = result.get('has_more', False)
