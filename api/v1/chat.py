@@ -1326,7 +1326,7 @@ async def get_more_phones(
                     # Extract query_multiplier from multiplier_used
                     if 'multiplier_used' in result:
                         ms_multiplier = result['multiplier_used']
-                        current_multiplier = updated_current_params.get('query_multiplier', 2)
+                        current_multiplier = updated_current_params.get('query_multiplier', 0)  # Default is 0, not 2
                         
                         # Always update to ensure we track microservice multiplier usage
                         constructed_updates['query_multiplier'] = ms_multiplier
@@ -1350,7 +1350,7 @@ async def get_more_phones(
                         logger.info("🔍 🔧 NO RESULTS + NO MORE + NO FLEXIBILITY → Need parameter relaxation")
                         
                         # Increase multiplier for broader search
-                        current_multiplier = updated_current_params.get('query_multiplier', 2)
+                        current_multiplier = updated_current_params.get('query_multiplier', 0)  # Default is 0, not 2
                         if current_multiplier < 5:  # Cap at 5
                             new_multiplier = current_multiplier + 1
                             constructed_updates['query_multiplier'] = new_multiplier
