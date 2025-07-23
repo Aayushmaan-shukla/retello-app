@@ -1156,6 +1156,17 @@ async def get_more_phones(
         logger.info(f"  - phone_names: {phone_names}")
         logger.info(f"  - request_id: {request_id}")
         
+        # 🔍 SPECIFIC CHECK: What query_multiplier did frontend send?
+        frontend_multiplier = current_params.get('query_multiplier', 'NOT_SET') if current_params else 'NOT_SET'
+        logger.info(f"🔍 🎯 FRONTEND SENT query_multiplier: {frontend_multiplier}")
+        
+        # 🔍 NEW CHAT DETECTION: Check if this should be a new chat
+        if frontend_multiplier != 'NOT_SET' and frontend_multiplier > 0:
+            logger.info(f"🔍 ⚠️  POTENTIAL ISSUE: Frontend sent query_multiplier={frontend_multiplier} > 0")
+            logger.info(f"🔍 ⚠️  Question: Is this supposed to be a NEW chat with fresh parameters?")
+            logger.info(f"🔍 ⚠️  If YES → This indicates a frontend initialization bug")
+            logger.info(f"🔍 ⚠️  If NO → This is continuation of existing conversation (normal)")
+        
         # Handle backward compatibility - if current_params is not provided, 
         # check if the parameters are directly in the request
         if not current_params and params:
@@ -1201,8 +1212,27 @@ async def get_more_phones(
             logger.info(f"🔍 BEFORE CALL - Last chat ID: {last_chat_before.id}")
             logger.info(f"🔍 BEFORE CALL - Current DB current_params: {last_chat_before.current_params}")
             logger.info(f"🔍 BEFORE CALL - Current DB has_more: {last_chat_before.has_more}")
+            logger.info(f"🔍 BEFORE CALL - Chat created_at: {last_chat_before.created_at}")
+            
+            # 🔍 NEW CHAT ANALYSIS: Compare frontend vs database
+            db_multiplier = last_chat_before.current_params.get('query_multiplier', 0) if last_chat_before.current_params else 0
+            logger.info(f"🔍 🔬 FRONTEND vs DATABASE ANALYSIS:")
+            logger.info(f"🔍   Database query_multiplier: {db_multiplier}")
+            logger.info(f"🔍   Frontend query_multiplier: {frontend_multiplier}")
+            
+            if db_multiplier == frontend_multiplier and frontend_multiplier not in ['NOT_SET', 0]:
+                logger.info(f"🔍 ✅ CONSISTENT: Frontend matches database → Continuing existing conversation")
+            elif db_multiplier != frontend_multiplier:
+                logger.info(f"🔍 ⚠️  MISMATCH: Database={db_multiplier} ≠ Frontend={frontend_multiplier}")
+                logger.info(f"🔍     This suggests potential sync issue or different chat context")
+            elif frontend_multiplier not in ['NOT_SET', 0]:
+                logger.info(f"🔍 ❌ POTENTIAL BUG: Frontend sent {frontend_multiplier} but database shows {db_multiplier}")
+                
         else:
             logger.info("🔍 BEFORE CALL - No previous chat found")
+            if frontend_multiplier not in ['NOT_SET', 0]:
+                logger.info(f"🔍 🚨 CRITICAL BUG: No database chats but frontend sent query_multiplier={frontend_multiplier}")
+                logger.info(f"🔍     For truly new users, frontend should send query_multiplier=0 or not set it")
         
         # Prepare payload for external microservice
         # Send the structure that the microservice expects
@@ -1218,6 +1248,10 @@ async def get_more_phones(
         logger.info(f"🔍 MICROSERVICE PAYLOAD:")
         logger.info(f"🔍 Microservice URL: {settings.GET_MORE_PHONES_URL}")
         logger.info(f"🔍 Payload: {json.dumps(payload, indent=2)}")
+        
+        # 🔍 SPECIFIC TRACKING: query_multiplier being sent
+        sent_multiplier = payload.get('params', {}).get('query_multiplier', 'NOT_SET')
+        logger.info(f"🔍 📤 SENDING query_multiplier: {sent_multiplier} to microservice")
         
         # Call the external microservice endpoint
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -1327,6 +1361,13 @@ async def get_more_phones(
                     if 'multiplier_used' in result:
                         ms_multiplier = result['multiplier_used']
                         current_multiplier = updated_current_params.get('query_multiplier', 0)  # Default is 0, not 2
+                        
+                        # 🔍 SPECIFIC TRACKING: Show what we sent vs what microservice used
+                        sent_multiplier = current_params.get('query_multiplier', 0) if current_params else 0
+                        logger.info(f"🔍 📤➡️📥 MULTIPLIER TRACKING:")
+                        logger.info(f"🔍   We SENT: query_multiplier = {sent_multiplier}")
+                        logger.info(f"🔍   Microservice USED: multiplier_used = {ms_multiplier}")
+                        logger.info(f"🔍   Will UPDATE to: query_multiplier = {ms_multiplier}")
                         
                         # Always update to ensure we track microservice multiplier usage
                         constructed_updates['query_multiplier'] = ms_multiplier
