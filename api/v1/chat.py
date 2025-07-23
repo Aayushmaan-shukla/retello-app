@@ -1318,6 +1318,58 @@ async def get_more_phones(
                     if result.get('flexible_applied'):
                         logger.info(f"🔍 ⚠️  flexible_applied: {result['flexible_applied']} (might indicate param relaxation)")
                     logger.info("🔍 === END PARAMETER CLUES ===")
+                    
+                    # 🔧 CONSTRUCT PARAMETER UPDATES FROM INDIVIDUAL FIELDS
+                    logger.info("🔍 === CONSTRUCTING PARAMETER UPDATES FROM INDIVIDUAL FIELDS ===")
+                    constructed_updates = {}
+                    
+                    # Extract query_multiplier from multiplier_used
+                    if 'multiplier_used' in result:
+                        ms_multiplier = result['multiplier_used']
+                        current_multiplier = updated_current_params.get('query_multiplier', 2)
+                        
+                        # Always update to ensure we track microservice multiplier usage
+                        constructed_updates['query_multiplier'] = ms_multiplier
+                        logger.info(f"🔍 🔧 EXTRACTED query_multiplier: {current_multiplier} → {ms_multiplier}")
+                    
+                    # Extract limit changes from total_limit
+                    if 'total_limit' in result:
+                        ms_total_limit = result['total_limit']
+                        current_limit = updated_current_params.get('current_query_limit', 10)
+                        
+                        # Update current_query_limit if different
+                        if ms_total_limit != current_limit:
+                            constructed_updates['current_query_limit'] = ms_total_limit
+                            logger.info(f"🔍 🔧 EXTRACTED current_query_limit: {current_limit} → {ms_total_limit}")
+                    
+                    # If no phones returned and has_more is False, might need parameter relaxation
+                    if (result.get('total_fetched', 0) == 0 and 
+                        result.get('has_more', True) is False and 
+                        not result.get('flexible_applied', False)):
+                        
+                        logger.info("🔍 🔧 NO RESULTS + NO MORE + NO FLEXIBILITY → Need parameter relaxation")
+                        
+                        # Increase multiplier for broader search
+                        current_multiplier = updated_current_params.get('query_multiplier', 2)
+                        if current_multiplier < 5:  # Cap at 5
+                            new_multiplier = current_multiplier + 1
+                            constructed_updates['query_multiplier'] = new_multiplier
+                            logger.info(f"🔍 🔧 AUTO-INCREASED query_multiplier: {current_multiplier} → {new_multiplier}")
+                    
+                    # Track when flexible search was applied
+                    if result.get('flexible_applied', False):
+                        constructed_updates['asked_clarifying'] = True
+                        logger.info("🔍 🔧 MARKED asked_clarifying=True due to flexible_applied")
+                    
+                    # Apply constructed updates
+                    if constructed_updates:
+                        logger.info(f"🔍 ✅ APPLYING CONSTRUCTED UPDATES: {constructed_updates}")
+                        updated_current_params.update(constructed_updates)
+                        logger.info(f"🔍 ✅ UPDATED current_params: {updated_current_params}")
+                    else:
+                        logger.info("🔍 ❌ NO CONSTRUCTED UPDATES - current_params remain unchanged")
+                    
+                    logger.info("🔍 === END PARAMETER CONSTRUCTION ===")
                 
                 # Always update has_more in current_params
                 updated_current_params['has_more'] = result.get('has_more', False)
