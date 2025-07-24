@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime
 
 from app.core.security import get_password_hash, get_current_user, verify_password, create_verification_token_with_expiry, verify_verification_token
+from app.core.config import settings
 from app.core.email import send_verification_email
 from app.core.email_simple import send_verification_email_simple
 from app.db.base import get_db

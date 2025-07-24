@@ -28,7 +28,9 @@ yarn-error.log*
 
 # Vercel
 .vercel
-
+venv/
 # TypeScript
 *.tsbuildinfo
 next-env.d.ts 
+
+__pycache__

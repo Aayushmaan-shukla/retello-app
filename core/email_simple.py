@@ -167,7 +167,7 @@ def send_verification_email_simple(email_to: str, verification_link: str, user_n
     <body>
         <div class="container">
             <h1>{settings.PROJECT_NAME}</h1>
-            <h2>Welcome{f", {user_name}" if user_name else ""}!</h2>
+            <h2>Welcome{", " + user_name if user_name else ""}!</h2>
             
             <p>Thank you for registering with {settings.PROJECT_NAME}. Please verify your email address by clicking the button below:</p>
             
@@ -192,7 +192,7 @@ def send_verification_email_simple(email_to: str, verification_link: str, user_n
     text_content = f"""
     Welcome to {settings.PROJECT_NAME}!
     
-    Thank you for registering{f", {user_name}" if user_name else ""}. 
+    Thank you for registering{", " + user_name if user_name else ""}. 
     
     Please verify your email address by visiting this link:
     {verification_link}

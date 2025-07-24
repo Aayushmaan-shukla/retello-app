@@ -123,7 +123,7 @@ def send_verification_email(email_to: str, verification_link: str, user_name: st
         <div class="container">
             <div class="header">
                 <div class="logo">{settings.PROJECT_NAME}</div>
-                <h2>Welcome{f", {user_name}" if user_name else ""}!</h2>
+                <h2>Welcome{", " + user_name if user_name else ""}!</h2>
             </div>
             
             <p>Thank you for registering with {settings.PROJECT_NAME}. To complete your registration and activate your account, please verify your email address by clicking the button below:</p>
@@ -219,7 +219,7 @@ def send_password_reset_email(email_to: str, reset_link: str, user_name: str = "
                 <h2>Password Reset Request</h2>
             </div>
             
-            <p>Hello{f" {user_name}" if user_name else ""},</p>
+            <p>Hello{" " + user_name if user_name else ""},</p>
             
             <p>We received a request to reset your password for your {settings.PROJECT_NAME} account. Click the button below to reset your password:</p>
             
