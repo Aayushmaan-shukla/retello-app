@@ -35,3 +35,23 @@ class Token(BaseModel):
 
 class TokenPayload(BaseModel):
     sub: Optional[str] = None 
+
+class TokenPayload(BaseModel):
+    sub: Optional[str] = None
+
+
+class EmailVerification(BaseModel):
+    token: str
+
+
+class ResendVerificationEmail(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordReset(BaseModel):
+    token: str
+    new_password: str

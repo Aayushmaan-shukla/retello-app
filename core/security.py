@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from typing import Any, Union
 from jose import jwt
 from passlib.context import CryptContext
+import secrets
 from .config import settings
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -51,3 +52,34 @@ async def get_current_user(
             detail="Inactive user"
         )
     return user 
+
+
+def generate_verification_token() -> str:
+    """Generate a secure random token for email verification"""
+    return secrets.token_urlsafe(32)
+
+
+def create_verification_token_with_expiry() -> tuple[str, datetime]:
+    """Create a verification token with expiry timestamp"""
+    token = generate_verification_token()
+    expires_at = datetime.utcnow() + timedelta(hours=settings.EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS)
+    return token, expires_at
+
+
+def verify_verification_token(token: str, stored_token: str, expires_at: datetime) -> bool:
+    """Verify if the verification token is valid and not expired"""
+    if not token or not stored_token:
+        return False
+    
+    if token != stored_token:
+        return False
+    
+    if datetime.utcnow() > expires_at:
+        return False
+    
+    return True
+
+
+def generate_password_reset_token() -> str:
+    """Generate a secure random token for password reset"""
+    return secrets.token_urlsafe(32)

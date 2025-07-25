@@ -68,6 +68,19 @@ class Settings(BaseSettings):
     # Gupshup Limits (from dashboard)
     GUPSHUP_DAILY_LIMIT: int = int(os.getenv("GUPSHUP_DAILY_LIMIT", "250"))  # 250 customers/24 hrs
 
+    # Email Configuration
+    SMTP_TLS: bool = bool(os.getenv("SMTP_TLS", "True"))
+    SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
+    SMTP_HOST: str = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    SMTP_USER: str = os.getenv("SMTP_USER", "")
+    SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
+    EMAILS_FROM_EMAIL: str = os.getenv("EMAILS_FROM_EMAIL", "")
+    EMAILS_FROM_NAME: str = os.getenv("EMAILS_FROM_NAME", "Retello")
+    
+    # Email Verification Settings
+    EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS: int = int(os.getenv("EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS", "24"))
+    FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
     # CORS
     BACKEND_CORS_ORIGINS: list = [
         "http://localhost:3000",
