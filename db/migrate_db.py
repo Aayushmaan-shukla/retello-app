@@ -135,7 +135,8 @@ def migrate_db():
             """))
             logger.info("Successfully added auth_method column to users table")
 
-        # Check if the is_email_verified column exists in users table (using snake_case)
+        # Check if the is_email_verified column exists in users table 
+        # First check for the snake_case version
         result = connection.execute(text("""
             SELECT column_name 
             FROM information_schema.columns 
@@ -143,12 +144,27 @@ def migrate_db():
         """))
         is_email_verified_exists = result.fetchone() is not None
 
-        if not is_email_verified_exists:
+        # Also check for the existing lowercase version
+        result = connection.execute(text("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_schema = 'public' AND table_name='users' AND column_name='isemailverified';
+        """))
+        isemailverified_exists = result.fetchone() is not None
+
+        if not is_email_verified_exists and not isemailverified_exists:
             connection.execute(text("""
                 ALTER TABLE users 
                 ADD COLUMN IF NOT EXISTS is_email_verified BOOLEAN NOT NULL DEFAULT FALSE;
             """))
             logger.info("Successfully added is_email_verified column to users table")
+        elif isemailverified_exists and not is_email_verified_exists:
+            # Rename the existing column to use snake_case
+            connection.execute(text("""
+                ALTER TABLE users 
+                RENAME COLUMN isemailverified TO is_email_verified;
+            """))
+            logger.info("Successfully renamed isemailverified to is_email_verified column in users table")
 
         # Check if the email_verification_token column exists in users table
         result = connection.execute(text("""

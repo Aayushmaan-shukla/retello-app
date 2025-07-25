@@ -18,7 +18,7 @@ class User(Base):
     pincode = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
     forgot_password_id = Column(String, nullable=True)
-    isEmailVerified = Column(Boolean, default=False)
+    is_email_verified = Column(Boolean, default=False)
     email_verification_token = Column(String, nullable=True)
     email_verification_token_expires = Column(DateTime, nullable=True)
 

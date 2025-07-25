@@ -38,7 +38,7 @@ def register(*, db: Session = Depends(get_db), user_in: UserCreate) -> Any:
         password=get_password_hash(user_in.password),
         created_at=datetime.utcnow(),
         is_active=True,
-        isEmailVerified=False,
+        is_email_verified=False,
         email_verification_token=verification_token,
         email_verification_token_expires=expires_at
     )
@@ -122,7 +122,7 @@ def verify_email(
         )
     
     # Mark email as verified and clear verification token
-    user.isEmailVerified = True
+    user.is_email_verified = True
     user.email_verification_token = None
     user.email_verification_token_expires = None
     
@@ -149,7 +149,7 @@ def resend_verification_email(
             detail="User not found"
         )
     
-    if user.isEmailVerified:
+    if user.is_email_verified:
         raise HTTPException(
             status_code=400,
             detail="Email is already verified"
