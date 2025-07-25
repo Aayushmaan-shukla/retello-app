@@ -134,6 +134,57 @@ def migrate_db():
             
             logger.info("Successfully added auth_method column to users table")
 
+        # Check if the isEmailVerified column exists in users table
+        result = connection.execute(text("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name='users' AND column_name='isEmailVerified';
+        """))
+        is_email_verified_exists = result.fetchone() is not None
+
+        if not is_email_verified_exists:
+            # Add isEmailVerified column if it doesn't exist
+            connection.execute(text("""
+                ALTER TABLE users 
+                ADD COLUMN IF NOT EXISTS isEmailVerified BOOLEAN DEFAULT FALSE;
+            """))
+            
+            logger.info("Successfully added isEmailVerified column to users table")
+
+        # Check if the email_verification_token column exists in users table
+        result = connection.execute(text("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name='users' AND column_name='email_verification_token';
+        """))
+        email_verification_token_exists = result.fetchone() is not None
+
+        if not email_verification_token_exists:
+            # Add email_verification_token column if it doesn't exist
+            connection.execute(text("""
+                ALTER TABLE users 
+                ADD COLUMN IF NOT EXISTS email_verification_token VARCHAR;
+            """))
+            
+            logger.info("Successfully added email_verification_token column to users table")
+
+        # Check if the email_verification_token_expires column exists in users table
+        result = connection.execute(text("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name='users' AND column_name='email_verification_token_expires';
+        """))
+        email_verification_token_expires_exists = result.fetchone() is not None
+
+        if not email_verification_token_expires_exists:
+            # Add email_verification_token_expires column if it doesn't exist
+            connection.execute(text("""
+                ALTER TABLE users 
+                ADD COLUMN IF NOT EXISTS email_verification_token_expires TIMESTAMP;
+            """))
+            
+            logger.info("Successfully added email_verification_token_expires column to users table")
+
         connection.commit()
 
 if __name__ == "__main__":
